@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: coracle-social/flotilla
+  IMAGE_NAME: coracle-social/zooid
 
 jobs:
   build-and-push-image:
