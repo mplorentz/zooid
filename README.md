@@ -21,7 +21,7 @@ Zooid supports a few environment variables, which configure shared resources lik
 
 Configuration files are written using [toml](https://toml.io). Top level configuration options are required:
 
-- `host` - a hostname to serve this relay on.
+- `host` - a hostname to serve this relay on. Must match the `Host` header sent by the client, including the port if the client connects on a non-standard port (e.g. `relay.example.com:8443`). When running behind a reverse proxy such as nginx, ensure the proxy forwards the original `Host` header unmodified; with nginx, use `proxy_set_header Host $http_host;` (the common `$host` variable drops the port).
 - `schema` - a string that identifies this relay. This cannot be changed, and must be usable as a sqlite identifier.
 - `secret` - the nostr secret key of the relay. Will be used to populate the relay's NIP 11 `self` field and sign generated events.
 - `inactive` - a boolean indicating whether the relay is currently inactive. The relay will not be available if set.
