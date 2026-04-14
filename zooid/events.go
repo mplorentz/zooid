@@ -294,17 +294,17 @@ func (events *EventStore) SaveEvent(evt nostr.Event) error {
 	return nil
 }
 
-func (events *EventStore) ReplaceEvent(evt nostr.Event) error {
+func (events *EventStore) ReplaceEvent(evt nostr.Event) ([]nostr.Event, error) {
 	filter := nostr.Filter{Kinds: []nostr.Kind{evt.Kind}, Authors: []nostr.PubKey{evt.PubKey}}
 	if evt.Kind.IsAddressable() {
 		filter.Tags = nostr.TagMap{"d": []string{evt.Tags.GetD()}}
 	}
 
 	shouldSave := true
-	shouldDelete := make([]nostr.ID, 0)
+	shouldDelete := make([]nostr.Event, 0)
 	for previous := range events.QueryEvents(filter, 1) {
 		if previous.CreatedAt <= evt.CreatedAt {
-			shouldDelete = append(shouldDelete, previous.ID)
+			shouldDelete = append(shouldDelete, previous)
 		} else {
 			shouldSave = false
 		}
@@ -312,16 +312,16 @@ func (events *EventStore) ReplaceEvent(evt nostr.Event) error {
 
 	if shouldSave {
 		if err := events.SaveEvent(evt); err != nil && err != eventstore.ErrDupEvent {
-			return fmt.Errorf("failed to save: %w", err)
+			return nil, fmt.Errorf("failed to save: %w", err)
 		}
 	}
 
 	// Wait until the end to delete old events, just in case our new one doesn't save
-	for _, id := range shouldDelete {
-		events.DeleteEvent(id)
+	for _, previous := range shouldDelete {
+		events.DeleteEvent(previous.ID)
 	}
 
-	return nil
+	return shouldDelete, nil
 }
 
 func (events *EventStore) CountEvents(filter nostr.Filter) (uint32, error) {
@@ -344,7 +344,8 @@ func (events *EventStore) CountEvents(filter nostr.Filter) (uint32, error) {
 
 func (events *EventStore) StoreEvent(event nostr.Event) error {
 	if event.Kind.IsReplaceable() || event.Kind.IsAddressable() {
-		return events.ReplaceEvent(event)
+		_, err := events.ReplaceEvent(event)
+		return err
 	}
 
 	if err := events.SaveEvent(event); err != nil && err != eventstore.ErrDupEvent {

@@ -391,7 +391,7 @@ func TestEventStore_ReplaceEvent(t *testing.T) {
 	}
 	event1.Sign(secret)
 
-	err := store.ReplaceEvent(event1)
+	_, err := store.ReplaceEvent(event1)
 	if err != nil {
 		t.Errorf("ReplaceEvent() error = %v", err)
 	}
@@ -405,7 +405,7 @@ func TestEventStore_ReplaceEvent(t *testing.T) {
 	}
 	event2.Sign(secret)
 
-	err = store.ReplaceEvent(event2)
+	_, err = store.ReplaceEvent(event2)
 	if err != nil {
 		t.Errorf("ReplaceEvent() error = %v", err)
 	}
@@ -452,7 +452,7 @@ func TestEventStore_ReplaceEvent_OlderEvent(t *testing.T) {
 	}
 	event2.Sign(secret)
 
-	err := store.ReplaceEvent(event2)
+	_, err := store.ReplaceEvent(event2)
 	if err != nil {
 		t.Errorf("ReplaceEvent() with older event error = %v", err)
 	}

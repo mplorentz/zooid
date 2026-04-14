@@ -101,7 +101,7 @@ func MakeInstance(filename string) (*Instance, error) {
 
 	// Expiration
 
-	instance.Relay.StartExpirationManager(instance.Relay.QueryStored, instance.Relay.DeleteEvent)
+	instance.Relay.StartExpirationManager(instance.Relay.QueryStored, instance.Relay.DeleteEvent, nil)
 
 	// HTTP request handling
 
@@ -264,7 +264,7 @@ func (instance *Instance) StoreEvent(ctx context.Context, event nostr.Event) err
 	return instance.Events.StoreEvent(event)
 }
 
-func (instance *Instance) ReplaceEvent(ctx context.Context, event nostr.Event) error {
+func (instance *Instance) ReplaceEvent(ctx context.Context, event nostr.Event) ([]nostr.Event, error) {
 	return instance.Events.ReplaceEvent(event)
 }
 
