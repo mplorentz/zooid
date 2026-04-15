@@ -16,6 +16,7 @@ Zooid supports a few environment variables, which configure shared resources lik
 - `DATA` - where to store databse files. Defaults to `./data`.
 - `API_HOST` - the hostname on which to expose the management API. If not set, the API is disabled.
 - `API_WHITELIST` - a comma-separated list of nostr hex pubkeys authorized to use the management API. Required when `API_HOST` is set.
+- `PPROF_ADDR` - an http host to serve pprof stats on.
 
 ## Configuration
 

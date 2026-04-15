@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +23,18 @@ func main() {
 	apiHost := zooid.Env("API_HOST")
 	apiWhitelist := zooid.Env("API_WHITELIST")
 	configDir := zooid.Env("CONFIG")
+	pprofAddr := zooid.Env("PPROF_ADDR")
+
+	// pprof server — only starts when PPROF_ADDR is set. Bind to
+	// 127.0.0.1:6060 (or similar) and tunnel via SSH; never expose publicly.
+	if pprofAddr != "" {
+		go func() {
+			log.Printf("pprof listening on %s\n", pprofAddr)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				log.Printf("pprof server error: %v\n", err)
+			}
+		}()
+	}
 
 	// Create the main handler
 	mainHandler := http.HandlerFunc(
