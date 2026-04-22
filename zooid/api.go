@@ -84,8 +84,7 @@ func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string][]string{"members": members})
+	writeJSON(w, http.StatusOK, map[string][]string{"members": members})
 }
 
 func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
@@ -112,13 +111,7 @@ func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
 		Events: events,
 	}
 
-	memberSet := make(map[string]struct{})
-
-	for _, pubkey := range management.GetMembers() {
-		memberSet[pubkey.Hex()] = struct{}{}
-	}
-
-	return sortedMembers(memberSet), nil
+	return collectMembers(management), nil
 }
 
 func (api *APIHandler) getMembersFromLoadedInstance(id string) ([]string, bool) {
@@ -130,15 +123,14 @@ func (api *APIHandler) getMembersFromLoadedInstance(id string) ([]string, bool) 
 		return nil, false
 	}
 
-	memberSet := make(map[string]struct{})
-	for _, pubkey := range instance.Management.GetMembers() {
-		memberSet[pubkey.Hex()] = struct{}{}
-	}
-
-	return sortedMembers(memberSet), true
+	return collectMembers(instance.Management), true
 }
 
-func sortedMembers(memberSet map[string]struct{}) []string {
+func collectMembers(management *ManagementStore) []string {
+	memberSet := make(map[string]struct{})
+	for _, pubkey := range management.GetMembers() {
+		memberSet[pubkey.Hex()] = struct{}{}
+	}
 	members := Keys(memberSet)
 	sort.Strings(members)
 	return members
@@ -151,9 +143,9 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 // writeJSON writes a JSON success response
-func writeJSON(w http.ResponseWriter, status int, data map[string]string) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	json.NewEncoder(w).Encode(v)
 }
 
 // scheme returns the URL scheme based on the request
@@ -261,7 +253,7 @@ func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the patched config
-	if err := api.validatePatchedConfig(existing); err != nil {
+	if err := api.validateConfig(existing); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -344,8 +336,8 @@ func deepMerge(base, patch map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-// validatePatchedConfig validates a config after patching
-func (api *APIHandler) validatePatchedConfig(config *Config) error {
+// validateConfig validates a config
+func (api *APIHandler) validateConfig(config *Config) error {
 	if config.Host == "" {
 		return fmt.Errorf("host is required")
 	}
@@ -432,7 +424,7 @@ func (api *APIHandler) parseAndValidateConfig(r *http.Request) (*Config, error) 
 		return nil, fmt.Errorf("invalid json config: %w", err)
 	}
 
-	if err := api.validatePatchedConfig(&config); err != nil {
+	if err := api.validateConfig(&config); err != nil {
 		return nil, err
 	}
 
