@@ -809,8 +809,8 @@ func TestAPIHandler_InvalidPath(t *testing.T) {
 
 		api.ServeHTTP(w, req)
 
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
 		}
 	})
 }
