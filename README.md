@@ -138,6 +138,7 @@ Endpoints:
 - `PUT /relay/{id}` - Updates an existing virtual relay config. Returns 200 on success, 404 if the id doesn't exist, 409 if the new schema/host conflicts with another relay.
 - `PATCH /relay/{id}` - Partially updates an existing virtual relay config by recursively merging the provided JSON. Returns 200 on success, 404 if the id doesn't exist, 409 if the new schema/host conflicts, 400 for invalid config. Use `null` values to remove fields.
 - `DELETE /relay/{id}` - Deletes a virtual relay config. Returns 200 on success, 404 if the id doesn't exist.
+- `GET /relay/{id}/members` - Returns relay members as JSON (`{"members": ["<pubkey>", ...]}`). Returns 200 on success, 404 if the relay id does not exist.
 
 ## Scripts
 

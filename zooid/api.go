@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"fiatjaf.com/nostr"
@@ -67,6 +68,24 @@ func (api *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) > 2 {
+		if len(parts) == 3 && parts[2] == "members" {
+			if r.Method != http.MethodGet {
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+
+			api.listRelayMembers(w, id)
+			return
+		}
+
+		// Keep trailing-slash compatibility for existing /relay/{id}/ calls.
+		if len(parts) != 3 || parts[2] != "" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+	}
+
 	switch r.Method {
 	case http.MethodPost:
 		api.createRelay(w, r, id)
@@ -79,6 +98,69 @@ func (api *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// listRelayMembers returns members for a relay as an array of pubkeys.
+func (api *APIHandler) listRelayMembers(w http.ResponseWriter, id string) {
+	members, err := api.resolveRelayMembers(id)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "relay not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load relay members: %v", err))
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string][]string{"members": members})
+}
+
+func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
+	if members, ok := api.getMembersFromLoadedInstance(id); ok {
+		return members, nil
+	}
+
+	configPath := api.configPath(id)
+	if err := api.checkConfigExists(configPath); err != nil {
+		return nil, err
+	}
+
+	instance, err := MakeInstanceFromPath(configPath)
+	if err != nil {
+		return nil, err
+	}
+	defer instance.Cleanup()
+
+	memberSet := make(map[string]struct{})
+	for _, pubkey := range instance.Management.GetMembers() {
+		memberSet[pubkey.Hex()] = struct{}{}
+	}
+
+	return sortedMembers(memberSet), nil
+}
+
+func (api *APIHandler) getMembersFromLoadedInstance(id string) ([]string, bool) {
+	instancesMux.RLock()
+	instance, exists := instancesByName[id+".toml"]
+	instancesMux.RUnlock()
+
+	if !exists || instance == nil || instance.Config == nil || instance.Management == nil {
+		return nil, false
+	}
+
+	memberSet := make(map[string]struct{})
+	for _, pubkey := range instance.Management.GetMembers() {
+		memberSet[pubkey.Hex()] = struct{}{}
+	}
+
+	return sortedMembers(memberSet), true
+}
+
+func sortedMembers(memberSet map[string]struct{}) []string {
+	members := Keys(memberSet)
+	sort.Strings(members)
+	return members
 }
 
 // writeError writes a JSON error response

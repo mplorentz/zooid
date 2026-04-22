@@ -604,6 +604,166 @@ func TestAPIHandler_DeleteRelay(t *testing.T) {
 	})
 }
 
+func TestAPIHandler_ListRelayMembers(t *testing.T) {
+	configDir := t.TempDir()
+
+	secretKey := nostr.Generate()
+	pubkey := secretKey.Public()
+	whitelist := pubkey.Hex()
+	api := NewAPIHandler(whitelist, configDir)
+
+	t.Run("list members from loaded relay instance", func(t *testing.T) {
+		member1 := nostr.Generate().Public()
+		member2 := nostr.Generate().Public()
+
+		management := createTestManagementStore()
+		if err := management.AllowPubkey(member1); err != nil {
+			t.Fatalf("failed to add first member: %v", err)
+		}
+		if err := management.AllowPubkey(member2); err != nil {
+			t.Fatalf("failed to add second member: %v", err)
+		}
+
+		instancesMux.Lock()
+		oldByName := instancesByName
+		oldByHost := instancesByHost
+		instancesByName = map[string]*Instance{
+			"loaded.toml": {
+				Config:     &Config{Inactive: false},
+				Management: management,
+			},
+		}
+		instancesByHost = map[string]*Instance{}
+		instancesMux.Unlock()
+		defer func() {
+			instancesMux.Lock()
+			instancesByName = oldByName
+			instancesByHost = oldByHost
+			instancesMux.Unlock()
+		}()
+
+		req := createAuthenticatedRequest(http.MethodGet, "http://api.example.com/relay/loaded/members", secretKey, nil)
+		w := httptest.NewRecorder()
+
+		api.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+
+		var payload struct {
+			Members []string `json:"members"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		expected := map[string]struct{}{
+			member1.Hex(): {},
+			member2.Hex(): {},
+		}
+
+		if len(payload.Members) != len(expected) {
+			t.Fatalf("expected %d members, got %d (%v)", len(expected), len(payload.Members), payload.Members)
+		}
+
+		for _, actual := range payload.Members {
+			if _, ok := expected[actual]; !ok {
+				t.Fatalf("unexpected member in response: %s", actual)
+			}
+		}
+	})
+
+	t.Run("list members from config fallback", func(t *testing.T) {
+		relaySecret := nostr.Generate()
+		owner := nostr.Generate().Public()
+		rolePubkey := nostr.Generate().Public()
+
+		config := &Config{
+			Host:   "members.example.com",
+			Schema: "members_" + RandomString(8),
+			Secret: relaySecret.Hex(),
+			Roles: map[string]Role{
+				"admin": {
+					Pubkeys: []string{rolePubkey.Hex()},
+				},
+			},
+		}
+		config.Info.Pubkey = owner.Hex()
+
+		if err := api.saveConfig(api.configPath("fallback"), config); err != nil {
+			t.Fatalf("failed to save config: %v", err)
+		}
+
+		instancesMux.Lock()
+		oldByName := instancesByName
+		oldByHost := instancesByHost
+		instancesByName = map[string]*Instance{}
+		instancesByHost = map[string]*Instance{}
+		instancesMux.Unlock()
+		defer func() {
+			instancesMux.Lock()
+			instancesByName = oldByName
+			instancesByHost = oldByHost
+			instancesMux.Unlock()
+		}()
+
+		req := createAuthenticatedRequest(http.MethodGet, "http://api.example.com/relay/fallback/members", secretKey, nil)
+		w := httptest.NewRecorder()
+
+		api.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+		}
+
+		var payload struct {
+			Members []string `json:"members"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		expected := map[string]struct{}{
+			owner.Hex():                {},
+			relaySecret.Public().Hex(): {},
+			rolePubkey.Hex():           {},
+		}
+
+		if len(payload.Members) != len(expected) {
+			t.Fatalf("expected %d members, got %d (%v)", len(expected), len(payload.Members), payload.Members)
+		}
+
+		for _, actual := range payload.Members {
+			if _, ok := expected[actual]; !ok {
+				t.Fatalf("unexpected member in response: %s", actual)
+			}
+		}
+	})
+
+	t.Run("non-existent relay returns not found", func(t *testing.T) {
+		req := createAuthenticatedRequest(http.MethodGet, "http://api.example.com/relay/missing/members", secretKey, nil)
+		w := httptest.NewRecorder()
+
+		api.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected status %d, got %d", http.StatusNotFound, w.Code)
+		}
+	})
+
+	t.Run("members endpoint rejects non-get methods", func(t *testing.T) {
+		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/relay/loaded/members", secretKey, []byte("{}"))
+		w := httptest.NewRecorder()
+
+		api.ServeHTTP(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
+		}
+	})
+}
+
 func TestAPIHandler_MethodNotAllowed(t *testing.T) {
 	configDir := t.TempDir()
 

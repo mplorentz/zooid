@@ -64,6 +64,11 @@ type Config struct {
 func LoadConfig(filename string) (*Config, error) {
 	path := filepath.Join(Env("CONFIG"), filename)
 
+	return LoadConfigFromPath(path)
+}
+
+func LoadConfigFromPath(path string) (*Config, error) {
+
 	var config Config
 	if _, err := toml.DecodeFile(path, &config); err != nil {
 		return nil, fmt.Errorf("Failed to parse config file %s: %w", path, err)

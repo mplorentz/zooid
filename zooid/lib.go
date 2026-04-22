@@ -28,6 +28,15 @@ func Dispatch(hostname string) (*Instance, bool) {
 	return instance, exists
 }
 
+func cleanupIfInactive(instance *Instance) bool {
+	if instance != nil && instance.Config != nil && instance.Config.Inactive {
+		instance.Cleanup()
+		return true
+	}
+
+	return false
+}
+
 func Start() {
 	dataDir := Env("DATA")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -63,7 +72,7 @@ func Start() {
 
 		if err != nil {
 			log.Printf("Failed to make instance for %s: %v", entry.Name(), err)
-		} else if instance.Config.Inactive {
+		} else if cleanupIfInactive(instance) {
 			log.Printf("Skipped inactive %s", entry.Name())
 		} else {
 			instancesByHost[instance.Config.Host] = instance
@@ -110,7 +119,7 @@ func Start() {
 					instance, err := MakeInstance(filename)
 					if err != nil {
 						log.Printf("Failed to reload %s: %v", filename, err)
-					} else if instance.Config.Inactive {
+					} else if cleanupIfInactive(instance) {
 						log.Printf("Skipped inactive %s", filename)
 					} else {
 						instancesByHost[instance.Config.Host] = instance

@@ -28,6 +28,19 @@ func MakeInstance(filename string) (*Instance, error) {
 		return nil, err
 	}
 
+	return makeInstance(config, filename)
+}
+
+func MakeInstanceFromPath(path string) (*Instance, error) {
+	config, err := LoadConfigFromPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return makeInstance(config, path)
+}
+
+func makeInstance(config *Config, source string) (*Instance, error) {
 	relay := khatru.NewRelay()
 
 	events := &EventStore{
@@ -122,7 +135,7 @@ func MakeInstance(filename string) (*Instance, error) {
 	// Initialize the database
 
 	if err := instance.Events.Init(); err != nil {
-		log.Fatal("Failed to initialize event store for ", filename, ": ", err)
+		log.Fatal("Failed to initialize event store for ", source, ": ", err)
 	}
 
 	// Enable extra functionality
