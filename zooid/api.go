@@ -13,6 +13,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/BurntSushi/toml"
+	"github.com/gosimple/slug"
 )
 
 // APIHandler handles REST API requests for managing virtual relays
@@ -92,14 +93,28 @@ func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
 		return members, nil
 	}
 
-	instance, err := MakeInstance(api.configName(id))
+	config, err := api.loadConfigFromPath(api.configPath(id))
 	if err != nil {
 		return nil, err
 	}
-	defer instance.Cleanup()
+
+	events := &EventStore{
+		Config: config,
+		Schema: &Schema{Name: slug.Make(config.Schema)},
+	}
+
+	if err := events.Init(); err != nil {
+		return nil, fmt.Errorf("failed to init event store: %w", err)
+	}
+
+	management := &ManagementStore{
+		Config: config,
+		Events: events,
+	}
 
 	memberSet := make(map[string]struct{})
-	for _, pubkey := range instance.Management.GetMembers() {
+
+	for _, pubkey := range management.GetMembers() {
 		memberSet[pubkey.Hex()] = struct{}{}
 	}
 
@@ -346,11 +361,10 @@ func (api *APIHandler) validatePatchedConfig(config *Config) error {
 	if _, err := nostr.SecretKeyFromHex(config.Secret); err != nil {
 		return fmt.Errorf("invalid secret key: %w", err)
 	}
-	if config.Info.Pubkey == "" {
-		return fmt.Errorf("info.pubkey is required")
-	}
-	if _, err := nostr.PubKeyFromHex(config.Info.Pubkey); err != nil {
-		return fmt.Errorf("invalid info.pubkey: %w", err)
+	if config.Info.Pubkey != "" {
+		if _, err := nostr.PubKeyFromHex(config.Info.Pubkey); err != nil {
+			return fmt.Errorf("invalid info.pubkey: %w", err)
+		}
 	}
 	return nil
 }

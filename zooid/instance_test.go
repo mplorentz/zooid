@@ -27,7 +27,7 @@ func createTestInstance() *Instance {
 
 	schema := &Schema{Name: "test_" + RandomString(8)}
 
-	relay := &khatru.Relay{}
+	relay := khatru.NewRelay()
 
 	events := &EventStore{
 		Relay:  relay,

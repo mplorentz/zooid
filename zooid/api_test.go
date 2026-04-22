@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"fiatjaf.com/nostr"
+	"github.com/gosimple/slug"
 )
 
 func TestAPIHandler_Authentication(t *testing.T) {
@@ -676,23 +677,38 @@ func TestAPIHandler_ListRelayMembers(t *testing.T) {
 
 	t.Run("list members from config fallback", func(t *testing.T) {
 		relaySecret := nostr.Generate()
-		owner := nostr.Generate().Public()
-		rolePubkey := nostr.Generate().Public()
+		member1 := nostr.Generate().Public()
+		member2 := nostr.Generate().Public()
 
 		config := &Config{
 			Host:   "members.example.com",
 			Schema: "members_" + RandomString(8),
 			Secret: relaySecret.Hex(),
-			Roles: map[string]Role{
-				"admin": {
-					Pubkeys: []string{rolePubkey.Hex()},
-				},
-			},
 		}
-		config.Info.Pubkey = owner.Hex()
 
 		if err := api.saveConfig(api.configPath("fallback"), config); err != nil {
 			t.Fatalf("failed to save config: %v", err)
+		}
+
+		// Seed DB with RELAY_MEMBERS to simulate a prior relay load.
+		seedEvents := &EventStore{
+			Config: &Config{secret: relaySecret},
+			Schema: &Schema{Name: slug.Make(config.Schema)},
+		}
+		if err := seedEvents.Init(); err != nil {
+			t.Fatalf("failed to init seed events: %v", err)
+		}
+		membersEvent := nostr.Event{
+			Kind:      RELAY_MEMBERS,
+			CreatedAt: nostr.Now(),
+			Tags: nostr.Tags{
+				{"-"},
+				{"member", member1.Hex()},
+				{"member", member2.Hex()},
+			},
+		}
+		if err := seedEvents.SignAndStoreEvent(&membersEvent, false); err != nil {
+			t.Fatalf("failed to seed members event: %v", err)
 		}
 
 		instancesMux.Lock()
@@ -725,9 +741,8 @@ func TestAPIHandler_ListRelayMembers(t *testing.T) {
 		}
 
 		expected := map[string]struct{}{
-			owner.Hex():                {},
-			relaySecret.Public().Hex(): {},
-			rolePubkey.Hex():           {},
+			member1.Hex(): {},
+			member2.Hex(): {},
 		}
 
 		if len(payload.Members) != len(expected) {

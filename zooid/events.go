@@ -364,7 +364,7 @@ func (events *EventStore) SignAndStoreEvent(event *nostr.Event, broadcast bool) 
 		return err
 	}
 
-	if broadcast {
+	if broadcast && events.Relay != nil {
 		events.Relay.BroadcastEvent(*event)
 	}
 
