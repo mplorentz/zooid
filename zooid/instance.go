@@ -31,15 +31,6 @@ func MakeInstance(filename string) (*Instance, error) {
 	return makeInstance(config, filename)
 }
 
-func MakeInstanceFromPath(path string) (*Instance, error) {
-	config, err := LoadConfigFromPath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	return makeInstance(config, path)
-}
-
 func makeInstance(config *Config, source string) (*Instance, error) {
 	relay := khatru.NewRelay()
 

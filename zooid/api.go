@@ -121,12 +121,7 @@ func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
 		return members, nil
 	}
 
-	configPath := api.configPath(id)
-	if err := api.checkConfigExists(configPath); err != nil {
-		return nil, err
-	}
-
-	instance, err := MakeInstanceFromPath(configPath)
+	instance, err := MakeInstance(api.configName(id))
 	if err != nil {
 		return nil, err
 	}
@@ -407,9 +402,14 @@ func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request, id st
 	writeJSON(w, http.StatusOK, map[string]string{"message": "relay deleted successfully"})
 }
 
+// configName returns the config file name
+func (api *APIHandler) configName(id string) string {
+	return id+".toml"
+}
+
 // configPath returns the full path for a config file
 func (api *APIHandler) configPath(id string) string {
-	return filepath.Join(api.configDir, id+".toml")
+	return filepath.Join(api.configDir, api.configName(id))
 }
 
 // checkConfigExists checks if a config file exists

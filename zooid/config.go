@@ -68,7 +68,6 @@ func LoadConfig(filename string) (*Config, error) {
 }
 
 func LoadConfigFromPath(path string) (*Config, error) {
-
 	var config Config
 	if _, err := toml.DecodeFile(path, &config); err != nil {
 		return nil, fmt.Errorf("Failed to parse config file %s: %w", path, err)
