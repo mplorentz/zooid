@@ -89,10 +89,10 @@ On your LiveKit server you should also set up a webhook that points to `https://
 
 ### Example
 
-The below config file might be saved as `./config/my-relay.example.com` in order to route requests from `wss://my-relay.example.com` to this virtual relay.
+The below config file might be saved as `./config/my-relay.example.com` in order to route requests from `wss://my-relay.example.com:3334` to this virtual relay.
 
 ```toml
-host = "my-relay.example.com"
+host = "my-relay.example.com:3334"
 schema = "my_relay"
 secret = "<hex private key>"
 
@@ -156,7 +156,7 @@ See `justfile` for defined commands.
 Zooid can be run using an OCI container:
 
 ```sh
-podman run -it \
+docker run -it \
   -p 3334:3334 \
   -v ./config:/app/config \
   -v ./media:/app/media \
