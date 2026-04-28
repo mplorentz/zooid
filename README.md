@@ -1,6 +1,41 @@
-# Zooid
+<p align="center">
+  <img src="./zooid-wordmark.jpeg" alt="Zooid" width="280" />
+</p>
 
-This is a multi-tenant relay based on [Khatru](https://gitworkshop.dev/fiatjaf.com/nostrlib/tree/master/khatru) which implements a range of access controls. It's designed to be used with [Flotilla](https://flotilla.social) as a community relay (complete with NIP 29 support), but it can also be used outside of a community context.
+<p align="center">
+  <b>A multi-tenant Nostr relay for communities.</b>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#api">API</a>
+</p>
+
+---
+
+Zooid is a multi-tenant relay built on [Khatru](https://gitworkshop.dev/fiatjaf.com/nostrlib/tree/master/khatru) with a flexible set of access controls. It's designed to pair with [Flotilla](https://flotilla.social) as a community relay (with full NIP 29 support), but it works just fine outside of a community context too.
+
+## Features
+
+- **Multi-tenant** — run any number of virtual relays from a single instance, each with its own host, schema, and policy.
+- **Community-ready** — first-class support for [NIP 29](https://github.com/nostr-protocol/nips/blob/master/29.md) groups, invite codes, and role-based access.
+- **Batteries included** — optional [Blossom](https://github.com/hzrd149/blossom) media, [NIP 86](https://github.com/nostr-protocol/nips/blob/master/86.md) management, [NIP 9a](https://github.com/nostr-protocol/nips/pull/1079) push, and [LiveKit](https://livekit.io/) audio/video calls.
+- **Remotely manageable** — JSON REST API authenticated via [NIP 98](https://github.com/nostr-protocol/nips/blob/master/98.md).
+- **Operationally simple** — single binary, SQLite storage, OCI container, optional pprof.
+
+## Quick start
+
+```sh
+docker run -it \
+  -p 3334:3334 \
+  -v ./config:/app/config \
+  -v ./media:/app/media \
+  -v ./data:/app/data \
+  ghcr.io/coracle-social/zooid
+```
+
+Drop a TOML config file into `./config/` (see [Configuration](#configuration)) and the relay will be available at `ws://<host>:3334`.
 
 ## Architecture
 
@@ -13,7 +48,7 @@ Zooid supports a few environment variables, which configure shared resources lik
 - `PORT` - the port the server will listen on for all requests. Defaults to `3334`.
 - `CONFIG` - where to store relay configuration files. Defaults to `./config`.
 - `MEDIA` - where to store blossom media files. Defaults to `./media`.
-- `DATA` - where to store databse files. Defaults to `./data`.
+- `DATA` - where to store database files. Defaults to `./data`.
 - `API_HOST` - the hostname on which to expose the management API. If not set, the API is disabled.
 - `API_WHITELIST` - a comma-separated list of nostr hex pubkeys authorized to use the management API. Required when `API_HOST` is set.
 - `PPROF_ADDR` - an http host to serve pprof stats on.
@@ -151,15 +186,6 @@ After running `just build`, a number of scripts will be available:
 
 See `justfile` for defined commands.
 
-## Deploying
+## License
 
-Zooid can be run using an OCI container:
-
-```sh
-docker run -it \
-  -p 3334:3334 \
-  -v ./config:/app/config \
-  -v ./media:/app/media \
-  -v ./data:/app/data \
-  ghcr.io/coracle-social/zooid
-```
+[MIT](./LICENSE)
