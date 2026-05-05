@@ -268,8 +268,9 @@ func (instance *Instance) StoreEvent(ctx context.Context, event nostr.Event) err
 	return instance.Events.StoreEvent(event)
 }
 
-func (instance *Instance) ReplaceEvent(ctx context.Context, event nostr.Event) ([]nostr.Event, error) {
-	return instance.Events.ReplaceEvent(event)
+func (instance *Instance) ReplaceEvent(ctx context.Context, event nostr.Event) error {
+	_, err := instance.Events.ReplaceEvent(event)
+	return err
 }
 
 func (instance *Instance) DeleteEvent(ctx context.Context, id nostr.ID) error {
