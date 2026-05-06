@@ -95,6 +95,7 @@ Configures NIP 86 support.
 Configures blossom support.
 
 - `enabled` - whether blossom is enabled.
+- `authenticated_read` - whether users must perform NIP 98 AUTH in order to fetch a file.
 
 ### `[push]`
 

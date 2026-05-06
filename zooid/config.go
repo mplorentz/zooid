@@ -45,7 +45,8 @@ type Config struct {
 	} `toml:"management" json:"management"`
 
 	Blossom struct {
-		Enabled bool `toml:"enabled" json:"enabled"`
+		Enabled           bool `toml:"enabled" json:"enabled"`
+		AuthenticatedRead bool `toml:"authenticated_read" json:"authenticated_read"`
 	} `toml:"blossom" json:"blossom"`
 
 	Livekit struct {

@@ -67,6 +67,10 @@ func (bl *BlossomStore) Enable(instance *Instance) {
 	}
 
 	backend.RejectGet = func(ctx context.Context, auth *nostr.Event, sha256 string, ext string) (bool, string, int) {
+		if !bl.Config.Blossom.AuthenticatedRead {
+			return false, "", 200
+		}
+
 		if auth == nil || !instance.Management.IsMember(auth.PubKey) {
 			return true, "unauthorized", 403
 		}
