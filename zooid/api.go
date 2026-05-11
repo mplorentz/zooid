@@ -358,6 +358,10 @@ func (api *APIHandler) validateConfig(config *Config) error {
 			return fmt.Errorf("invalid info.pubkey: %w", err)
 		}
 	}
+	normalizeBlossomConfig(config)
+	if err := validateBlossomFileStorage(config); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -406,6 +410,7 @@ func (api *APIHandler) loadConfigFromPath(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	normalizeBlossomConfig(&config)
 	return &config, nil
 }
 

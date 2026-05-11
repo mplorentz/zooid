@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 type Role struct {
@@ -47,6 +48,8 @@ type Config struct {
 	Blossom struct {
 		Enabled           bool `toml:"enabled" json:"enabled"`
 		AuthenticatedRead bool `toml:"authenticated_read" json:"authenticated_read"`
+		Backend string            `toml:"backend" json:"backend"`
+		S3      BlossomS3Settings `toml:"s3" json:"s3"`
 	} `toml:"blossom" json:"blossom"`
 
 	Livekit struct {
@@ -62,6 +65,17 @@ type Config struct {
 	secret nostr.SecretKey
 }
 
+// BlossomS3Settings configures S3-compatible object storage for Blossom blobs
+// when [blossom] backend is "s3".
+type BlossomS3Settings struct {
+	Endpoint  string `toml:"endpoint" json:"endpoint"`
+	Region    string `toml:"region" json:"region"`
+	Bucket    string `toml:"bucket" json:"bucket"`
+	AccessKey string `toml:"access_key" json:"access_key"`
+	SecretKey string `toml:"secret_key" json:"secret_key"`
+	KeyPrefix string `toml:"key_prefix" json:"key_prefix"`
+}
+
 func LoadConfig(filename string) (*Config, error) {
 	path := filepath.Join(Env("CONFIG"), filename)
 
@@ -73,6 +87,8 @@ func LoadConfigFromPath(path string) (*Config, error) {
 	if _, err := toml.DecodeFile(path, &config); err != nil {
 		return nil, fmt.Errorf("Failed to parse config file %s: %w", path, err)
 	}
+
+	normalizeBlossomConfig(&config)
 
 	if config.Host == "" {
 		return nil, fmt.Errorf("host is required")
@@ -98,7 +114,54 @@ func LoadConfigFromPath(path string) (*Config, error) {
 	config.Secret = ""
 	config.secret = secret
 
+	if err := validateBlossomFileStorage(&config); err != nil {
+		return nil, err
+	}
+
 	return &config, nil
+}
+
+func normalizeBlossomConfig(c *Config) {
+	s := &c.Blossom.S3
+	s.Region = strings.TrimSpace(s.Region)
+	s.Bucket = strings.TrimSpace(s.Bucket)
+	s.AccessKey = strings.TrimSpace(s.AccessKey)
+	s.SecretKey = strings.TrimSpace(s.SecretKey)
+	s.Endpoint = strings.TrimRight(strings.TrimSpace(s.Endpoint), "/")
+	s.KeyPrefix = strings.Trim(strings.TrimSpace(s.KeyPrefix), "/")
+
+	c.Blossom.Backend = strings.ToLower(strings.TrimSpace(c.Blossom.Backend))
+	if c.Blossom.Backend == "" {
+		c.Blossom.Backend = "local"
+	}
+}
+
+func validateBlossomFileStorage(c *Config) error {
+	if !c.Blossom.Enabled {
+		return nil
+	}
+	switch c.Blossom.Backend {
+	case "local":
+		return nil
+	case "s3":
+		// fall through
+	default:
+		return fmt.Errorf(`blossom.backend must be "local", "s3", or empty (defaults to local)`)
+	}
+	s := c.Blossom.S3
+	if s.Bucket == "" {
+		return fmt.Errorf("blossom.s3.bucket is required when blossom.backend is s3")
+	}
+	if s.Region == "" {
+		return fmt.Errorf("blossom.s3.region is required when blossom.backend is s3")
+	}
+	if s.AccessKey == "" {
+		return fmt.Errorf("blossom.s3.access_key is required when blossom.backend is s3")
+	}
+	if s.SecretKey == "" {
+		return fmt.Errorf("blossom.s3.secret_key is required when blossom.backend is s3")
+	}
+	return nil
 }
 
 func (config *Config) Save() error {

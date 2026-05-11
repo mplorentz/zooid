@@ -1,6 +1,8 @@
 package zooid
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"fiatjaf.com/nostr"
@@ -152,5 +154,96 @@ func TestConfig_MemberRole(t *testing.T) {
 
 	if !config.CanInvite(anyPubkey) {
 		t.Error("Any pubkey should have member role permissions")
+	}
+}
+
+func TestValidateBlossomFileStorage(t *testing.T) {
+	t.Run("blossom disabled skips validation", func(t *testing.T) {
+		c := &Config{}
+		c.Blossom.Enabled = false
+		c.Blossom.Backend = "s3"
+		normalizeBlossomConfig(c)
+		if err := validateBlossomFileStorage(c); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("local storage needs no s3 fields", func(t *testing.T) {
+		c := &Config{}
+		c.Blossom.Enabled = true
+		c.Blossom.Backend = "local"
+		normalizeBlossomConfig(c)
+		if err := validateBlossomFileStorage(c); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("s3 requires bucket region keys and secret", func(t *testing.T) {
+		c := &Config{}
+		c.Blossom.Enabled = true
+		c.Blossom.Backend = "s3"
+		c.Blossom.S3.Region = "us-east-1"
+		normalizeBlossomConfig(c)
+		if err := validateBlossomFileStorage(c); err == nil {
+			t.Fatal("expected error for missing bucket and credentials")
+		}
+
+		c.Blossom.S3.Bucket = "b"
+		c.Blossom.S3.AccessKey = "k"
+		c.Blossom.S3.SecretKey = "s"
+		normalizeBlossomConfig(c)
+		if err := validateBlossomFileStorage(c); err != nil {
+			t.Fatalf("expected nil with all s3 fields set, got %v", err)
+		}
+	})
+
+	t.Run("invalid backend value", func(t *testing.T) {
+		c := &Config{}
+		c.Blossom.Enabled = true
+		c.Blossom.Backend = "nfs"
+		normalizeBlossomConfig(c)
+		if err := validateBlossomFileStorage(c); err == nil {
+			t.Fatal("expected error for unknown backend")
+		}
+	})
+}
+
+func TestLoadConfigFromPath_BlossomS3(t *testing.T) {
+	sk := nostr.Generate()
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "relay.toml")
+	tomlBody := `host = "r.example.com"
+schema = "myrelay"
+secret = "` + sk.Hex() + `"
+inactive = false
+
+[info]
+name = "n"
+pubkey = "` + sk.Public().Hex() + `"
+
+[blossom]
+enabled = true
+backend = "s3"
+
+[blossom.s3]
+region = "auto"
+bucket = "test-bucket"
+access_key = "AKIA"
+secret_key = "topsecret"
+endpoint = "http://127.0.0.1:9000"
+`
+	if err := os.WriteFile(path, []byte(tomlBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("LoadConfigFromPath: %v", err)
+	}
+	if cfg.Blossom.S3.SecretKey != "topsecret" {
+		t.Errorf("expected s3 secret_key retained in struct, got %q", cfg.Blossom.S3.SecretKey)
+	}
+	if cfg.Blossom.Backend != "s3" {
+		t.Errorf("backend: got %q", cfg.Blossom.Backend)
 	}
 }
