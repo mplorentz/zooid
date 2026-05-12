@@ -32,7 +32,7 @@ docker run -it \
   -v ./config:/app/config \
   -v ./media:/app/media \
   -v ./data:/app/data \
-  ghcr.io/coracle-social/zooid
+  gitea.coracle.social/coracle/zooid
 ```
 
 Drop a TOML config file into `./config/` (see [Configuration](#configuration)) and the relay will be available at `ws://<host>:3334`.
