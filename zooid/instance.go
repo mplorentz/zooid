@@ -9,7 +9,6 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
-	"github.com/gosimple/slug"
 )
 
 type Instance struct {
@@ -23,7 +22,7 @@ type Instance struct {
 }
 
 func MakeInstance(filename string) (*Instance, error) {
-	config, err := LoadConfig(filename)
+	config, err := LoadConfigFromName(filename)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +37,7 @@ func makeInstance(config *Config, source string) (*Instance, error) {
 		Relay:  relay,
 		Config: config,
 		Schema: &Schema{
-			Name: slug.Make(config.Schema),
+			Name: config.Schema,
 		},
 	}
 

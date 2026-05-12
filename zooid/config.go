@@ -3,11 +3,11 @@ package zooid
 import (
 	"fiatjaf.com/nostr"
 	"fmt"
+	"regexp"
 	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 type Role struct {
@@ -46,10 +46,10 @@ type Config struct {
 	} `toml:"management" json:"management"`
 
 	Blossom struct {
-		Enabled           bool `toml:"enabled" json:"enabled"`
-		AuthenticatedRead bool `toml:"authenticated_read" json:"authenticated_read"`
-		Backend string            `toml:"backend" json:"backend"`
-		S3      BlossomS3Settings `toml:"s3" json:"s3"`
+		Enabled           bool              `toml:"enabled" json:"enabled"`
+		AuthenticatedRead bool              `toml:"authenticated_read" json:"authenticated_read"`
+		Adapter           string            `toml:"adapter" json:"adapter"`
+		S3                BlossomS3Settings `toml:"s3" json:"s3"`
 	} `toml:"blossom" json:"blossom"`
 
 	Livekit struct {
@@ -66,7 +66,7 @@ type Config struct {
 }
 
 // BlossomS3Settings configures S3-compatible object storage for Blossom blobs
-// when [blossom] backend is "s3".
+// when [blossom] adapter is "s3".
 type BlossomS3Settings struct {
 	Endpoint  string `toml:"endpoint" json:"endpoint"`
 	Region    string `toml:"region" json:"region"`
@@ -76,10 +76,20 @@ type BlossomS3Settings struct {
 	KeyPrefix string `toml:"key_prefix" json:"key_prefix"`
 }
 
-func LoadConfig(filename string) (*Config, error) {
-	path := filepath.Join(Env("CONFIG"), filename)
+func ConfigPathFromId(id string) string {
+	return filepath.Join(Env("CONFIG"), id+".toml")
+}
 
-	return LoadConfigFromPath(path)
+func ConfigPathFromName(name string) string {
+	return filepath.Join(Env("CONFIG"), name)
+}
+
+func LoadConfigFromId(id string) (*Config, error) {
+	return LoadConfigFromPath(ConfigPathFromId(id))
+}
+
+func LoadConfigFromName(name string) (*Config, error) {
+	return LoadConfigFromPath(ConfigPathFromName(name))
 }
 
 func LoadConfigFromPath(path string) (*Config, error) {
@@ -88,79 +98,63 @@ func LoadConfigFromPath(path string) (*Config, error) {
 		return nil, fmt.Errorf("Failed to parse config file %s: %w", path, err)
 	}
 
-	normalizeBlossomConfig(&config)
-
-	if config.Host == "" {
-		return nil, fmt.Errorf("host is required")
-	}
-
-	if config.Schema == "" {
-		return nil, fmt.Errorf("schema is required")
-	}
-
-	if config.Info.Pubkey == "" {
-		return nil, fmt.Errorf("info.pubkey is required")
-	}
-
-	secret, err := nostr.SecretKeyFromHex(config.Secret)
-	if err != nil {
-		return nil, err
-	}
-
-	// Save the path for later
 	config.path = path
 
-	// Make the secret... secret
-	config.Secret = ""
-	config.secret = secret
-
-	if err := validateBlossomFileStorage(&config); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 
 	return &config, nil
 }
 
-func normalizeBlossomConfig(c *Config) {
-	s := &c.Blossom.S3
-	s.Region = strings.TrimSpace(s.Region)
-	s.Bucket = strings.TrimSpace(s.Bucket)
-	s.AccessKey = strings.TrimSpace(s.AccessKey)
-	s.SecretKey = strings.TrimSpace(s.SecretKey)
-	s.Endpoint = strings.TrimRight(strings.TrimSpace(s.Endpoint), "/")
-	s.KeyPrefix = strings.Trim(strings.TrimSpace(s.KeyPrefix), "/")
+func (config *Config) Validate() error {
+	if config.Blossom.Adapter == "" {
+		config.Blossom.Adapter = "local"
+	}
 
-	c.Blossom.Backend = strings.ToLower(strings.TrimSpace(c.Blossom.Backend))
-	if c.Blossom.Backend == "" {
-		c.Blossom.Backend = "local"
+	if config.Host == "" {
+		return fmt.Errorf("host is required")
 	}
-}
 
-func validateBlossomFileStorage(c *Config) error {
-	if !c.Blossom.Enabled {
-		return nil
+	if config.Schema == "" {
+		return fmt.Errorf("schema is required")
 	}
-	switch c.Blossom.Backend {
-	case "local":
-		return nil
-	case "s3":
-		// fall through
-	default:
-		return fmt.Errorf(`blossom.backend must be "local", "s3", or empty (defaults to local)`)
+
+	if !regexp.MustCompile(`^[a-z_][a-z0-9_]*$`).MatchString(config.Schema) {
+		return fmt.Errorf("schema must contain only lowercase letters, numbers, and underscores")
 	}
-	s := c.Blossom.S3
-	if s.Bucket == "" {
-		return fmt.Errorf("blossom.s3.bucket is required when blossom.backend is s3")
+
+  secret, err := nostr.SecretKeyFromHex(config.Secret)
+
+	if err != nil {
+		return fmt.Errorf("invalid secret key: %w", err)
 	}
-	if s.Region == "" {
-		return fmt.Errorf("blossom.s3.region is required when blossom.backend is s3")
+
+	// Make the secret... secret
+	config.Secret = ""
+	config.secret = secret
+
+	if _, err := nostr.PubKeyFromHex(config.Info.Pubkey); err != nil {
+		return fmt.Errorf("invalid info.pubkey: %w", err)
 	}
-	if s.AccessKey == "" {
-		return fmt.Errorf("blossom.s3.access_key is required when blossom.backend is s3")
+
+	if config.Blossom.Adapter == "s3" {
+		if config.Blossom.S3.Bucket == "" {
+			return fmt.Errorf("blossom.s3.bucket is required when blossom.adapter is s3")
+		}
+		if config.Blossom.S3.Region == "" {
+			return fmt.Errorf("blossom.s3.region is required when blossom.adapter is s3")
+		}
+		if config.Blossom.S3.AccessKey == "" {
+			return fmt.Errorf("blossom.s3.access_key is required when blossom.adapter is s3")
+		}
+		if config.Blossom.S3.SecretKey == "" {
+			return fmt.Errorf("blossom.s3.secret_key is required when blossom.adapter is s3")
+		}
+	} else if config.Blossom.Adapter != "local" {
+		return fmt.Errorf("invalid blossom adapter")
 	}
-	if s.SecretKey == "" {
-		return fmt.Errorf("blossom.s3.secret_key is required when blossom.backend is s3")
-	}
+
 	return nil
 }
 

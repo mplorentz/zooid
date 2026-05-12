@@ -64,7 +64,7 @@ func Start() {
 		if err != nil {
 			log.Printf("Failed to make instance for %s: %v", entry.Name(), err)
 		} else if instance.Config.Inactive {
-  		instance.Cleanup()
+			instance.Cleanup()
 			log.Printf("Skipped inactive %s", entry.Name())
 		} else {
 			instancesByHost[instance.Config.Host] = instance
@@ -112,7 +112,7 @@ func Start() {
 					if err != nil {
 						log.Printf("Failed to reload %s: %v", filename, err)
 					} else if instance.Config.Inactive {
-  					instance.Cleanup()
+						instance.Cleanup()
 						log.Printf("Skipped inactive %s", filename)
 					} else {
 						instancesByHost[instance.Config.Host] = instance

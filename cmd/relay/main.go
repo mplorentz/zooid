@@ -21,8 +21,6 @@ func main() {
 
 	port := zooid.Env("PORT")
 	apiHost := zooid.Env("API_HOST")
-	apiWhitelist := zooid.Env("API_WHITELIST")
-	configDir := zooid.Env("CONFIG")
 	pprofAddr := zooid.Env("PPROF_ADDR")
 
 	// pprof server — only starts when PPROF_ADDR is set. Bind to
@@ -50,8 +48,8 @@ func main() {
 
 	// Wrap with API handler if API_HOST is configured
 	var handler http.Handler = mainHandler
-	if apiHost != "" && apiWhitelist != "" {
-		apiHandler := zooid.NewAPIHandler(apiWhitelist, configDir)
+	if apiHost != "" {
+		apiHandler := zooid.NewAPIHandler()
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check if this request is for the API host
 			if r.Host == apiHost {

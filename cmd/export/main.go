@@ -26,10 +26,9 @@ func main() {
 	}
 
 	// Load config for the specified relay
-	filename := fmt.Sprintf("%s.toml", *relay)
-	config, err := zooid.LoadConfig(filename)
+	config, err := zooid.LoadConfigFromId(*relay)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "No such config file", filename)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 

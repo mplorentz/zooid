@@ -3,8 +3,8 @@ package zooid
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
+	"fmt"
 	"log"
 	"net/url"
 	"path/filepath"
@@ -16,7 +16,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/gosimple/slug"
 	"github.com/spf13/afero"
 )
 
@@ -25,131 +24,24 @@ type BlossomStore struct {
 	Events eventstore.Store
 }
 
-func loadAWSConfigForBlossomS3(ctx context.Context, s *BlossomS3Settings) (aws.Config, error) {
-	return awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(s.Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(s.AccessKey, s.SecretKey, "")),
-	)
-}
-
-func s3APIClientForBlossomSettings(awsCfg aws.Config, s *BlossomS3Settings) *s3.Client {
-	customEndpoint := s.Endpoint != ""
-	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if customEndpoint {
-			o.BaseEndpoint = aws.String(s.Endpoint)
-			// Custom endpoints (e.g. MinIO) expect path-style addressing.
-			o.UsePathStyle = true
-		}
-	})
-}
-
-func blossomS3ObjectKey(slugName, sha256, keyPrefix string) string {
-	rel := slugName + "/" + sha256
-	if keyPrefix != "" {
-		return keyPrefix + "/" + rel
-	}
-	return rel
-}
-
-func attachBlossomLocalBlobs(bs *blossom.BlossomServer, slugName string) {
-	dir := filepath.Join(Env("MEDIA"), slugName)
-	osfs := afero.NewOsFs()
-	_ = osfs.MkdirAll(dir, 0755)
-
-	bs.StoreBlob = func(ctx context.Context, sha256 string, ext string, body []byte) error {
-		file, err := osfs.Create(filepath.Join(dir, sha256))
-		if err != nil {
-			return err
-		}
-
-		if _, err := io.Copy(file, bytes.NewReader(body)); err != nil {
-			return err
-		}
-
-		return nil
-	}
-
-	bs.LoadBlob = func(ctx context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
-		file, err := osfs.Open(filepath.Join(dir, sha256))
-		if err != nil {
-			return nil, nil, err
-		}
-		return file, nil, nil
-	}
-
-	bs.DeleteBlob = func(ctx context.Context, sha256 string, ext string) error {
-		return osfs.Remove(filepath.Join(dir, sha256))
-	}
-}
-
-func attachBlossomS3Blobs(bs *blossom.BlossomServer, cfg *Config, slugName string) error {
-	s := &cfg.Blossom.S3
-	ctx := context.Background()
-
-	awsCfg, err := loadAWSConfigForBlossomS3(ctx, s)
-	if err != nil {
-		return fmt.Errorf("aws config: %w", err)
-	}
-
-	client := s3APIClientForBlossomSettings(awsCfg, s)
-	bucket := s.Bucket
-
-	bs.StoreBlob = func(ctx context.Context, sha256 string, ext string, body []byte) error {
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(blossomS3ObjectKey(slugName, sha256, s.KeyPrefix)),
-			Body:   bytes.NewReader(body),
-		})
-		return err
-	}
-
-	bs.LoadBlob = func(ctx context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
-		out, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(blossomS3ObjectKey(slugName, sha256, s.KeyPrefix)),
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		defer out.Body.Close()
-
-		data, err := io.ReadAll(out.Body)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		return bytes.NewReader(data), nil, nil
-	}
-
-	bs.DeleteBlob = func(ctx context.Context, sha256 string, ext string) error {
-		_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(blossomS3ObjectKey(slugName, sha256, s.KeyPrefix)),
-		})
-		return err
-	}
-
-	return nil
-}
-
 func (bl *BlossomStore) Enable(instance *Instance) {
-	slugName := slug.Make(bl.Config.Schema)
 	backend := blossom.New(instance.Relay, "https://"+bl.Config.Host)
-
 	backend.Store = blossom.EventStoreBlobIndexWrapper{
 		Store:      bl.Events,
 		ServiceURL: "https://" + bl.Config.Host,
 	}
 
-	switch bl.Config.Blossom.Backend {
+	switch bl.Config.Blossom.Adapter {
 	case "local":
-		attachBlossomLocalBlobs(backend, slugName)
+		if err := bl.UseLocalAdapter(backend); err != nil {
+  		log.Fatalf("blossom: failed to use local adapter %q", err)
+		}
 	case "s3":
-		if err := attachBlossomS3Blobs(backend, bl.Config, slugName); err != nil {
-			log.Fatalf("blossom: s3: %v", err)
+		if err := bl.UseS3Adapter(backend); err != nil {
+  		log.Fatalf("blossom: failed to use s3 adapter %q", err)
 		}
 	default:
-		log.Fatalf("blossom: unknown backend %q (use local or s3)", bl.Config.Blossom.Backend)
+		log.Fatalf("blossom: unknown backend %q", bl.Config.Blossom.Adapter)
 	}
 
 	backend.RejectUpload = func(ctx context.Context, auth *nostr.Event, size int, ext string) (bool, string, int) {
@@ -196,4 +88,115 @@ func (bl *BlossomStore) Enable(instance *Instance) {
 	instance.Relay.Info.SupportedNIPs = append(instance.Relay.Info.SupportedNIPs, "BUD-01")
 	instance.Relay.Info.SupportedNIPs = append(instance.Relay.Info.SupportedNIPs, "BUD-02")
 	instance.Relay.Info.SupportedNIPs = append(instance.Relay.Info.SupportedNIPs, "BUD-11")
+}
+
+// Local adapter
+
+func (bl *BlossomStore) UseLocalAdapter(backend *blossom.BlossomServer) error {
+	dir := filepath.Join(Env("MEDIA"), bl.Config.Schema)
+	osfs := afero.NewOsFs()
+	_ = osfs.MkdirAll(dir, 0755)
+
+	backend.StoreBlob = func(ctx context.Context, sha256 string, ext string, body []byte) error {
+		file, err := osfs.Create(filepath.Join(dir, sha256))
+		if err != nil {
+			return err
+		}
+
+		if _, err := io.Copy(file, bytes.NewReader(body)); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	backend.LoadBlob = func(ctx context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
+		file, err := osfs.Open(filepath.Join(dir, sha256))
+		if err != nil {
+			return nil, nil, err
+		}
+		return file, nil, nil
+	}
+
+	backend.DeleteBlob = func(ctx context.Context, sha256 string, ext string) error {
+		return osfs.Remove(filepath.Join(dir, sha256))
+	}
+
+	return nil
+}
+
+// S3 adapter
+
+func (bl *BlossomStore) S3Key(sha256 string) string {
+  key := bl.Config.Schema + "/" + sha256
+
+  if bl.Config.Blossom.S3.KeyPrefix != "" {
+    key = bl.Config.Blossom.S3.KeyPrefix + "/" + key
+  }
+
+  return key
+}
+
+func (bl *BlossomStore) UseS3Adapter(backend *blossom.BlossomServer) error {
+	ctx := context.Background()
+	awsConfig, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(bl.Config.Blossom.S3.Region),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				bl.Config.Blossom.S3.AccessKey,
+				bl.Config.Blossom.S3.SecretKey,
+				"",
+			),
+		),
+	)
+
+	if err != nil {
+		return fmt.Errorf("aws config: %w", err)
+	}
+
+	client := s3.NewFromConfig(awsConfig, func(o *s3.Options) {
+		if bl.Config.Blossom.S3.Endpoint != "" {
+			o.BaseEndpoint = aws.String(bl.Config.Blossom.S3.Endpoint)
+			o.UsePathStyle = true
+		}
+	})
+
+	backend.StoreBlob = func(ctx context.Context, sha256 string, ext string, body []byte) error {
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bl.Config.Blossom.S3.Bucket),
+			Key:    aws.String(bl.S3Key(sha256)),
+			Body:   bytes.NewReader(body),
+		})
+
+		return err
+	}
+
+	backend.LoadBlob = func(ctx context.Context, sha256 string, ext string) (io.ReadSeeker, *url.URL, error) {
+		out, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bl.Config.Blossom.S3.Bucket),
+			Key:    aws.String(bl.S3Key(sha256)),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		defer out.Body.Close()
+
+		data, err := io.ReadAll(out.Body)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return bytes.NewReader(data), nil, nil
+	}
+
+	backend.DeleteBlob = func(ctx context.Context, sha256 string, ext string) error {
+		_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(bl.Config.Blossom.S3.Bucket),
+			Key:    aws.String(bl.S3Key(sha256)),
+		})
+
+		return err
+	}
+
+	return nil
 }

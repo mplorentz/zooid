@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"fiatjaf.com/nostr"
-	"github.com/gosimple/slug"
 )
 
 func TestAPIHandler_Authentication(t *testing.T) {
@@ -693,7 +692,7 @@ func TestAPIHandler_ListRelayMembers(t *testing.T) {
 		// Seed DB with RELAY_MEMBERS to simulate a prior relay load.
 		seedEvents := &EventStore{
 			Config: &Config{secret: relaySecret},
-			Schema: &Schema{Name: slug.Make(config.Schema)},
+			Schema: &Schema{Name: config.Schema},
 		}
 		if err := seedEvents.Init(); err != nil {
 			t.Fatalf("failed to init seed events: %v", err)

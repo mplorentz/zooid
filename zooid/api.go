@@ -6,48 +6,38 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
-
-	"fiatjaf.com/nostr"
-	"github.com/BurntSushi/toml"
-	"github.com/gosimple/slug"
 )
 
-// APIHandler handles REST API requests for managing virtual relays
 type APIHandler struct {
 	whitelist map[string]bool
-	configDir string
 	mux       http.Handler
 }
 
-// NewAPIHandler creates a new API handler with the given whitelist
-func NewAPIHandler(whitelist string, configDir string) *APIHandler {
-	w := make(map[string]bool)
-	for _, pubkey := range Split(whitelist, ",") {
+func NewAPIHandler() *APIHandler {
+	whitelist := make(map[string]bool)
+	for _, pubkey := range Split(Env("API_WHITELIST"), ",") {
 		pubkey = strings.TrimSpace(pubkey)
 		if pubkey != "" {
-			w[pubkey] = true
+			whitelist[pubkey] = true
 		}
 	}
-	api := &APIHandler{
-		whitelist: w,
-		configDir: configDir,
-	}
-	api.mux = api.buildMux()
-	return api
-}
 
-func (api *APIHandler) buildMux() http.Handler {
-	mux := http.NewServeMux()
+	api := &APIHandler{
+		whitelist: whitelist,
+	}
+
+  mux := http.NewServeMux()
 	mux.HandleFunc("POST /relay/{id}", api.auth(api.createRelay))
-	mux.HandleFunc("PUT /relay/{id}", api.auth(api.updateRelay))
+	mux.HandleFunc("PUT /relay/{id}", api.auth(api.putRelay))
 	mux.HandleFunc("PATCH /relay/{id}", api.auth(api.patchRelay))
 	mux.HandleFunc("DELETE /relay/{id}", api.auth(api.deleteRelay))
 	mux.HandleFunc("GET /relay/{id}/members", api.auth(api.listRelayMembers))
-	return mux
+
+	api.mux = mux
+
+  return api
 }
 
 func (api *APIHandler) auth(next http.HandlerFunc) http.HandlerFunc {
@@ -65,214 +55,45 @@ func (api *APIHandler) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ServeHTTP implements the http.Handler interface
 func (api *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	api.mux.ServeHTTP(w, r)
 }
 
-// listRelayMembers returns members for a relay as an array of pubkeys.
-func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	members, err := api.resolveRelayMembers(id)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "relay not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load relay members: %v", err))
-		}
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string][]string{"members": members})
-}
-
-func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
-	if members, ok := api.getMembersFromLoadedInstance(id); ok {
-		return members, nil
-	}
-
-	config, err := api.loadConfigFromPath(api.configPath(id))
-	if err != nil {
-		return nil, err
-	}
-
-	events := &EventStore{
-		Config: config,
-		Schema: &Schema{Name: slug.Make(config.Schema)},
-	}
-
-	if err := events.Init(); err != nil {
-		return nil, fmt.Errorf("failed to init event store: %w", err)
-	}
-
-	management := &ManagementStore{
-		Config: config,
-		Events: events,
-	}
-
-	return collectMembers(management), nil
-}
-
-func (api *APIHandler) getMembersFromLoadedInstance(id string) ([]string, bool) {
-	instancesMux.RLock()
-	instance, exists := instancesByName[id+".toml"]
-	instancesMux.RUnlock()
-
-	if !exists || instance == nil || instance.Config == nil || instance.Management == nil {
-		return nil, false
-	}
-
-	return collectMembers(instance.Management), true
-}
-
-func collectMembers(management *ManagementStore) []string {
-	memberSet := make(map[string]struct{})
-	for _, pubkey := range management.GetMembers() {
-		memberSet[pubkey.Hex()] = struct{}{}
-	}
-	members := Keys(memberSet)
-	sort.Strings(members)
-	return members
-}
-
-// writeError writes a JSON error response
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-// writeJSON writes a JSON success response
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
 
-// scheme returns the URL scheme based on the request
-func scheme(r *http.Request) string {
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		return "https"
+// Relay CRUD
+
+func (api *APIHandler) configFromRequest(r *http.Request) (*Config, error) {
+	r.Body = http.MaxBytesReader(nil, r.Body, 1024*1024)
+	defer r.Body.Close()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read body: %w", err)
 	}
-	return "http"
+
+	var config Config
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, fmt.Errorf("invalid json config: %w", err)
+	}
+
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
 }
 
-// createRelay creates a new relay config file
-func (api *APIHandler) createRelay(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	configPath := api.configPath(id)
-
-	if _, err := os.Stat(configPath); err == nil {
-		writeError(w, http.StatusConflict, "relay with this id already exists")
-		return
-	}
-
-	config, err := api.parseAndValidateConfig(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := api.checkDuplicateSchemaOrHost(config, ""); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	if err := api.saveConfig(configPath, config); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]string{"message": "relay created successfully"})
-}
-
-// updateRelay updates an existing relay config file
-func (api *APIHandler) updateRelay(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	configPath := api.configPath(id)
-
-	if err := api.checkConfigExists(configPath); err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "relay not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check config: %v", err))
-		}
-		return
-	}
-
-	config, err := api.parseAndValidateConfig(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := api.checkDuplicateSchemaOrHost(config, id+".toml"); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	if err := api.saveConfig(configPath, config); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "relay updated successfully"})
-}
-
-// patchRelay partially updates an existing relay config
-func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	configPath := api.configPath(id)
-
-	if err := api.checkConfigExists(configPath); err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "relay not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check config: %v", err))
-		}
-		return
-	}
-
-	// Load existing config
-	existing, err := api.loadConfigFromPath(configPath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to read existing config: %v", err))
-		return
-	}
-
-	// Parse patch
-	patch, err := api.readPatch(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Apply patch to existing config
-	if err := api.applyPatch(existing, patch); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Validate the patched config
-	if err := api.validateConfig(existing); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := api.checkDuplicateSchemaOrHost(existing, id+".toml"); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	if err := api.saveConfig(configPath, existing); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "relay patched successfully"})
-}
-
-// readPatch reads and parses the patch JSON from the request
-func (api *APIHandler) readPatch(r *http.Request) (map[string]interface{}, error) {
+func (api *APIHandler) patchFromRequest(r *http.Request) (map[string]interface{}, error) {
 	r.Body = http.MaxBytesReader(nil, r.Body, 1024*1024)
 	defer r.Body.Close()
 
@@ -283,13 +104,138 @@ func (api *APIHandler) readPatch(r *http.Request) (map[string]interface{}, error
 
 	var patch map[string]interface{}
 	if err := json.Unmarshal(body, &patch); err != nil {
-		return nil, fmt.Errorf("invalid json: %w", err)
+		return nil, fmt.Errorf("invalid json config: %w", err)
 	}
 
 	return patch, nil
 }
 
-// applyPatch applies a JSON patch to a config using reflection via JSON marshaling
+func (api *APIHandler) checkDuplicateSchemaOrHost(config *Config, excludeFilename string) error {
+	entries, err := os.ReadDir(Env("CONFIG"))
+	if err != nil {
+		return fmt.Errorf("failed to read config directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == excludeFilename || !strings.HasSuffix(entry.Name(), ".toml") {
+			continue
+		}
+
+		if existing, err := LoadConfigFromName(entry.Name()); err == nil {
+			if existing.Schema == config.Schema {
+				return fmt.Errorf("schema %q is already in use", config.Schema)
+			}
+			if existing.Host == config.Host {
+				return fmt.Errorf("host %q is already in use", config.Host)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Create relay
+
+func (api *APIHandler) createRelay(w http.ResponseWriter, r *http.Request) {
+	path := ConfigPathFromId(r.PathValue("id"))
+	if _, err := os.Stat(path); err == nil {
+		writeError(w, http.StatusConflict, "relay with this id already exists")
+		return
+	}
+
+	config, err := api.configFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := api.checkDuplicateSchemaOrHost(config, ""); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	if err := config.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{"message": "relay created successfully"})
+}
+
+// Put relay
+
+func (api *APIHandler) putRelay(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	path := ConfigPathFromId(id)
+	if _, err := os.Stat(path); err != nil {
+		writeError(w, http.StatusConflict, "relay not found")
+		return
+	}
+
+	config, err := api.configFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := api.checkDuplicateSchemaOrHost(config, id+".toml"); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	if err := config.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "relay updated successfully"})
+}
+
+// Patch relay
+
+func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	path := ConfigPathFromId(id)
+	if _, err := os.Stat(path); err != nil {
+		writeError(w, http.StatusConflict, "relay not found")
+		return
+	}
+
+	config, err := LoadConfigFromPath(path)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to read existing config: %v", err))
+		return
+	}
+
+	patch, err := api.patchFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := api.applyPatch(config, patch); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := config.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := api.checkDuplicateSchemaOrHost(config, id+".toml"); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	if err := config.Save(); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to write config: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "relay patched successfully"})
+}
+
 func (api *APIHandler) applyPatch(config *Config, patch map[string]interface{}) error {
 	// Convert config to map for merging
 	configJSON, _ := json.Marshal(config)
@@ -311,7 +257,6 @@ func (api *APIHandler) applyPatch(config *Config, patch map[string]interface{}) 
 	return nil
 }
 
-// deepMerge recursively merges patch into base
 func deepMerge(base, patch map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 
@@ -336,50 +281,17 @@ func deepMerge(base, patch map[string]interface{}) map[string]interface{} {
 	return result
 }
 
-// validateConfig validates a config
-func (api *APIHandler) validateConfig(config *Config) error {
-	if config.Host == "" {
-		return fmt.Errorf("host is required")
-	}
-	if config.Schema == "" {
-		return fmt.Errorf("schema is required")
-	}
-	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(config.Schema) {
-		return fmt.Errorf("schema must contain only letters, numbers, and underscores")
-	}
-	if config.Secret == "" {
-		return fmt.Errorf("secret is required")
-	}
-	if _, err := nostr.SecretKeyFromHex(config.Secret); err != nil {
-		return fmt.Errorf("invalid secret key: %w", err)
-	}
-	if config.Info.Pubkey != "" {
-		if _, err := nostr.PubKeyFromHex(config.Info.Pubkey); err != nil {
-			return fmt.Errorf("invalid info.pubkey: %w", err)
-		}
-	}
-	normalizeBlossomConfig(config)
-	if err := validateBlossomFileStorage(config); err != nil {
-		return err
-	}
-	return nil
-}
+// Delete relay
 
-// deleteRelay deletes a relay config file
 func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	configPath := api.configPath(id)
-
-	if err := api.checkConfigExists(configPath); err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "relay not found")
-		} else {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check config: %v", err))
-		}
+	path := ConfigPathFromId(id)
+	if _, err := os.Stat(path); err != nil {
+		writeError(w, http.StatusConflict, "relay not found")
 		return
 	}
 
-	if err := os.Remove(configPath); err != nil {
+	if err := os.Remove(path); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to delete config: %v", err))
 		return
 	}
@@ -387,96 +299,60 @@ func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "relay deleted successfully"})
 }
 
-// configName returns the config file name
-func (api *APIHandler) configName(id string) string {
-	return id+".toml"
+// Relay members endpoint
+
+func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	members, err := api.resolveRelayMembers(id)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "relay not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load relay members: %v", err))
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string][]string{"members": members})
 }
 
-// configPath returns the full path for a config file
-func (api *APIHandler) configPath(id string) string {
-	return filepath.Join(api.configDir, api.configName(id))
-}
+func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
+	instancesMux.RLock()
+	instance, exists := instancesByName[id+".toml"]
+	instancesMux.RUnlock()
 
-// checkConfigExists checks if a config file exists
-func (api *APIHandler) checkConfigExists(path string) error {
-	_, err := os.Stat(path)
-	return err
-}
+	if exists {
+		return collectMembers(instance.Management), nil
+	}
 
-// loadConfigFromPath loads a config from a file path
-func (api *APIHandler) loadConfigFromPath(path string) (*Config, error) {
-	var config Config
-	_, err := toml.DecodeFile(path, &config)
+	config, err := LoadConfigFromId(id)
 	if err != nil {
 		return nil, err
 	}
-	normalizeBlossomConfig(&config)
-	return &config, nil
+
+	events := &EventStore{
+		Config: config,
+		Schema: &Schema{Name: config.Schema},
+	}
+
+	if err := events.Init(); err != nil {
+		return nil, fmt.Errorf("failed to init event store: %w", err)
+	}
+
+	management := &ManagementStore{
+		Config: config,
+		Events: events,
+	}
+
+	return collectMembers(management), nil
 }
 
-// parseAndValidateConfig parses and validates the JSON config from the request body
-func (api *APIHandler) parseAndValidateConfig(r *http.Request) (*Config, error) {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1024*1024)
-	defer r.Body.Close()
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read body: %w", err)
+func collectMembers(management *ManagementStore) []string {
+	memberSet := make(map[string]struct{})
+	for _, pubkey := range management.GetMembers() {
+		memberSet[pubkey.Hex()] = struct{}{}
 	}
-
-	var config Config
-	if err := json.Unmarshal(body, &config); err != nil {
-		return nil, fmt.Errorf("invalid json config: %w", err)
-	}
-
-	if err := api.validateConfig(&config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
-}
-
-// saveConfig saves a config to a file as TOML
-func (api *APIHandler) saveConfig(path string, config *Config) error {
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
-	}
-	defer file.Close()
-
-	encoder := toml.NewEncoder(file)
-	if err := encoder.Encode(config); err != nil {
-		return fmt.Errorf("failed to encode toml: %w", err)
-	}
-
-	return nil
-}
-
-// checkDuplicateSchemaOrHost checks if the schema or host is already in use by another config
-func (api *APIHandler) checkDuplicateSchemaOrHost(config *Config, excludeFilename string) error {
-	entries, err := os.ReadDir(api.configDir)
-	if err != nil {
-		return fmt.Errorf("failed to read config directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == excludeFilename || !strings.HasSuffix(entry.Name(), ".toml") {
-			continue
-		}
-
-		path := filepath.Join(api.configDir, entry.Name())
-		var existing Config
-		if _, err := toml.DecodeFile(path, &existing); err != nil {
-			continue
-		}
-
-		if existing.Schema == config.Schema {
-			return fmt.Errorf("schema %q is already in use", config.Schema)
-		}
-		if existing.Host == config.Host {
-			return fmt.Errorf("host %q is already in use", config.Host)
-		}
-	}
-
-	return nil
+	members := Keys(memberSet)
+	sort.Strings(members)
+	return members
 }
