@@ -96,6 +96,18 @@ Configures blossom support.
 
 - `enabled` - whether blossom is enabled.
 - `authenticated_read` - whether users must perform NIP 98 AUTH in order to fetch a file.
+- `adapter` - where to store blobs. Either `local` (the default, stores files under `MEDIA`) or `s3` (stores files in an S3-compatible bucket).
+
+#### `[blossom.s3]`
+
+Configures S3-compatible object storage, used when `blossom.adapter` is `s3`.
+
+- `endpoint` - the S3 endpoint URL. Optional; leave unset to use AWS S3.
+- `region` - the bucket region. Required when `adapter` is `s3`.
+- `bucket` - the bucket name. Required when `adapter` is `s3`.
+- `access_key` - the access key ID. Required when `adapter` is `s3`.
+- `secret_key` - the secret access key. Required when `adapter` is `s3`.
+- `key_prefix` - an optional prefix prepended to every object key.
 
 ### `[push]`
 
