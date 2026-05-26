@@ -3,8 +3,8 @@ package zooid
 import (
 	"bytes"
 	"context"
-	"io"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"path/filepath"
@@ -34,11 +34,11 @@ func (bl *BlossomStore) Enable(instance *Instance) {
 	switch bl.Config.Blossom.Adapter {
 	case "local":
 		if err := bl.UseLocalAdapter(backend); err != nil {
-  		log.Fatalf("blossom: failed to use local adapter %q", err)
+			log.Fatalf("blossom: failed to use local adapter %q", err)
 		}
 	case "s3":
 		if err := bl.UseS3Adapter(backend); err != nil {
-  		log.Fatalf("blossom: failed to use s3 adapter %q", err)
+			log.Fatalf("blossom: failed to use s3 adapter %q", err)
 		}
 	default:
 		log.Fatalf("blossom: unknown backend %q", bl.Config.Blossom.Adapter)
@@ -128,13 +128,13 @@ func (bl *BlossomStore) UseLocalAdapter(backend *blossom.BlossomServer) error {
 // S3 adapter
 
 func (bl *BlossomStore) S3Key(sha256 string) string {
-  key := bl.Config.Schema + "/" + sha256
+	key := bl.Config.Schema + "/" + sha256
 
-  if bl.Config.Blossom.S3.KeyPrefix != "" {
-    key = bl.Config.Blossom.S3.KeyPrefix + "/" + key
-  }
+	if bl.Config.Blossom.S3.KeyPrefix != "" {
+		key = bl.Config.Blossom.S3.KeyPrefix + "/" + key
+	}
 
-  return key
+	return key
 }
 
 func (bl *BlossomStore) UseS3Adapter(backend *blossom.BlossomServer) error {

@@ -25,8 +25,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load config for the specified relay
-	config, err := zooid.LoadConfigFromId(*relay)
+	name := zooid.ConfigNameFromId(*relay)
+	path := zooid.ConfigPathFromName(name)
+	config, err := zooid.LoadConfigFromPath(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

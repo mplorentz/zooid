@@ -28,7 +28,7 @@ func NewAPIHandler() *APIHandler {
 		whitelist: whitelist,
 	}
 
-  mux := http.NewServeMux()
+	mux := http.NewServeMux()
 	mux.HandleFunc("POST /relay/{id}", api.auth(api.createRelay))
 	mux.HandleFunc("PUT /relay/{id}", api.auth(api.putRelay))
 	mux.HandleFunc("PATCH /relay/{id}", api.auth(api.patchRelay))
@@ -37,7 +37,7 @@ func NewAPIHandler() *APIHandler {
 
 	api.mux = mux
 
-  return api
+	return api
 }
 
 func (api *APIHandler) auth(next http.HandlerFunc) http.HandlerFunc {
@@ -72,7 +72,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // Relay CRUD
 
-func (api *APIHandler) configFromRequest(r *http.Request) (*Config, error) {
+func (api *APIHandler) configFromRequest(path string, r *http.Request) (*Config, error) {
 	r.Body = http.MaxBytesReader(nil, r.Body, 1024*1024)
 	defer r.Body.Close()
 
@@ -81,16 +81,7 @@ func (api *APIHandler) configFromRequest(r *http.Request) (*Config, error) {
 		return nil, fmt.Errorf("failed to read body: %w", err)
 	}
 
-	var config Config
-	if err := json.Unmarshal(body, &config); err != nil {
-		return nil, fmt.Errorf("invalid json config: %w", err)
-	}
-
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
+	return LoadConfigFromJson(path, body)
 }
 
 func (api *APIHandler) patchFromRequest(r *http.Request) (map[string]interface{}, error) {
@@ -121,7 +112,9 @@ func (api *APIHandler) checkDuplicateSchemaOrHost(config *Config, excludeFilenam
 			continue
 		}
 
-		if existing, err := LoadConfigFromName(entry.Name()); err == nil {
+		path := ConfigPathFromName(entry.Name())
+
+		if existing, err := LoadConfigFromPath(path); err == nil {
 			if existing.Schema == config.Schema {
 				return fmt.Errorf("schema %q is already in use", config.Schema)
 			}
@@ -137,13 +130,14 @@ func (api *APIHandler) checkDuplicateSchemaOrHost(config *Config, excludeFilenam
 // Create relay
 
 func (api *APIHandler) createRelay(w http.ResponseWriter, r *http.Request) {
-	path := ConfigPathFromId(r.PathValue("id"))
+	name := ConfigNameFromId(r.PathValue("id"))
+	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err == nil {
 		writeError(w, http.StatusConflict, "relay with this id already exists")
 		return
 	}
 
-	config, err := api.configFromRequest(r)
+	config, err := api.configFromRequest(path, r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -166,19 +160,20 @@ func (api *APIHandler) createRelay(w http.ResponseWriter, r *http.Request) {
 
 func (api *APIHandler) putRelay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	path := ConfigPathFromId(id)
+	name := ConfigNameFromId(id)
+	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
 		writeError(w, http.StatusConflict, "relay not found")
 		return
 	}
 
-	config, err := api.configFromRequest(r)
+	config, err := api.configFromRequest(path, r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	if err := api.checkDuplicateSchemaOrHost(config, id+".toml"); err != nil {
+	if err := api.checkDuplicateSchemaOrHost(config, name); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -195,7 +190,8 @@ func (api *APIHandler) putRelay(w http.ResponseWriter, r *http.Request) {
 
 func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	path := ConfigPathFromId(id)
+	name := ConfigNameFromId(id)
+	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
 		writeError(w, http.StatusConflict, "relay not found")
 		return
@@ -223,7 +219,7 @@ func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := api.checkDuplicateSchemaOrHost(config, id+".toml"); err != nil {
+	if err := api.checkDuplicateSchemaOrHost(config, name); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -285,7 +281,8 @@ func deepMerge(base, patch map[string]interface{}) map[string]interface{} {
 
 func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	path := ConfigPathFromId(id)
+	name := ConfigNameFromId(id)
+	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
 		writeError(w, http.StatusConflict, "relay not found")
 		return
@@ -303,7 +300,8 @@ func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 
 func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	members, err := api.resolveRelayMembers(id)
+	name := ConfigNameFromId(id)
+	members, err := api.resolveRelayMembers(name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeError(w, http.StatusNotFound, "relay not found")
@@ -316,16 +314,17 @@ func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string][]string{"members": members})
 }
 
-func (api *APIHandler) resolveRelayMembers(id string) ([]string, error) {
+func (api *APIHandler) resolveRelayMembers(name string) ([]string, error) {
 	instancesMux.RLock()
-	instance, exists := instancesByName[id+".toml"]
+	instance, exists := instancesByName[name]
 	instancesMux.RUnlock()
 
 	if exists {
 		return collectMembers(instance.Management), nil
 	}
 
-	config, err := LoadConfigFromId(id)
+	path := ConfigPathFromName(name)
+	config, err := LoadConfigFromPath(path)
 	if err != nil {
 		return nil, err
 	}

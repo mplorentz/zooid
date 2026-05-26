@@ -1,12 +1,13 @@
 package zooid
 
 import (
+	"encoding/json"
 	"fiatjaf.com/nostr"
 	"fmt"
-	"regexp"
 	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 )
 
@@ -60,7 +61,7 @@ type Config struct {
 
 	Roles map[string]Role `toml:"roles" json:"roles"`
 
-	// Private/parsed values
+	// Parsed values
 	path   string
 	secret nostr.SecretKey
 }
@@ -76,26 +77,33 @@ type BlossomS3Settings struct {
 	KeyPrefix string `toml:"key_prefix" json:"key_prefix"`
 }
 
-func ConfigPathFromId(id string) string {
-	return filepath.Join(Env("CONFIG"), id+".toml")
+func ConfigNameFromId(id string) string {
+	return id + ".toml"
 }
 
 func ConfigPathFromName(name string) string {
 	return filepath.Join(Env("CONFIG"), name)
 }
 
-func LoadConfigFromId(id string) (*Config, error) {
-	return LoadConfigFromPath(ConfigPathFromId(id))
-}
-
-func LoadConfigFromName(name string) (*Config, error) {
-	return LoadConfigFromPath(ConfigPathFromName(name))
-}
-
 func LoadConfigFromPath(path string) (*Config, error) {
 	var config Config
 	if _, err := toml.DecodeFile(path, &config); err != nil {
 		return nil, fmt.Errorf("Failed to parse config file %s: %w", path, err)
+	}
+
+	config.path = path
+
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+func LoadConfigFromJson(path string, body []byte) (*Config, error) {
+	var config Config
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, fmt.Errorf("invalid json config: %w", err)
 	}
 
 	config.path = path
@@ -124,14 +132,12 @@ func (config *Config) Validate() error {
 		return fmt.Errorf("schema must contain only lowercase letters, numbers, and underscores")
 	}
 
-  secret, err := nostr.SecretKeyFromHex(config.Secret)
+	secret, err := nostr.SecretKeyFromHex(config.Secret)
 
 	if err != nil {
 		return fmt.Errorf("invalid secret key: %w", err)
 	}
 
-	// Make the secret... secret
-	config.Secret = ""
 	config.secret = secret
 
 	if _, err := nostr.PubKeyFromHex(config.Info.Pubkey); err != nil {
@@ -159,9 +165,6 @@ func (config *Config) Validate() error {
 }
 
 func (config *Config) Save() error {
-	// Restore the secret key to the public field for saving
-	config.Secret = config.secret.Hex()
-
 	file, err := os.Create(config.path)
 	if err != nil {
 		return fmt.Errorf("Failed to open config file %s: %w", config.path, err)
@@ -172,9 +175,6 @@ func (config *Config) Save() error {
 	if err := encoder.Encode(config); err != nil {
 		return fmt.Errorf("Failed to encode config file %s: %w", config.path, err)
 	}
-
-	// Clear the secret again
-	config.Secret = ""
 
 	return nil
 }

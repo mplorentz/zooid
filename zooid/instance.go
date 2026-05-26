@@ -21,13 +21,14 @@ type Instance struct {
 	Push       *PushManager
 }
 
-func MakeInstance(filename string) (*Instance, error) {
-	config, err := LoadConfigFromName(filename)
+func MakeInstance(name string) (*Instance, error) {
+	path := ConfigPathFromName(name)
+	config, err := LoadConfigFromPath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return makeInstance(config, filename)
+	return makeInstance(config, name)
 }
 
 func makeInstance(config *Config, source string) (*Instance, error) {

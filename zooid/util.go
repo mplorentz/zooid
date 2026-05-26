@@ -183,7 +183,7 @@ func validateNIP98Auth(r *http.Request) (nostr.PubKey, error) {
 		return nostr.PubKey{}, fmt.Errorf("invalid event signature")
 	}
 
-  scheme := "http"
+	scheme := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = scheme + "s"
 	}
