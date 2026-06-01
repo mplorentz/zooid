@@ -16,16 +16,14 @@ import (
 )
 
 func TestAPIHandler_Authentication(t *testing.T) {
-	// Create a temporary config directory
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	// Create a test keypair for authentication
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
 
 	// Create API handler with whitelist containing our test pubkey
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	t.Run("missing authorization header", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/relay/test", strings.NewReader("{}"))
@@ -173,12 +171,11 @@ func TestAPIHandler_Authentication(t *testing.T) {
 }
 
 func TestAPIHandler_CreateRelay(t *testing.T) {
-	configDir := t.TempDir()
+	configDir := useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	validConfig := map[string]interface{}{
 		"host":   "relay.example.com",
@@ -226,6 +223,9 @@ func TestAPIHandler_CreateRelay(t *testing.T) {
 			"host":   "other.example.com",
 			"schema": "testrelay", // Same schema as existing
 			"secret": secretKey.Hex(),
+			"info": map[string]interface{}{
+				"pubkey": pubkey.Hex(),
+			},
 		}
 		body, _ := json.Marshal(config)
 		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/relay/other", secretKey, body)
@@ -243,6 +243,9 @@ func TestAPIHandler_CreateRelay(t *testing.T) {
 			"host":   "relay.example.com", // Same host as existing
 			"schema": "otherschema",
 			"secret": secretKey.Hex(),
+			"info": map[string]interface{}{
+				"pubkey": pubkey.Hex(),
+			},
 		}
 		body, _ := json.Marshal(config)
 		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/relay/other2", secretKey, body)
@@ -301,12 +304,11 @@ func TestAPIHandler_CreateRelay(t *testing.T) {
 }
 
 func TestAPIHandler_UpdateRelay(t *testing.T) {
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	// Create initial relay
 	initialConfig := map[string]interface{}{
@@ -371,6 +373,9 @@ func TestAPIHandler_UpdateRelay(t *testing.T) {
 			"host":   "other.example.com",
 			"schema": "otherrelay",
 			"secret": secretKey.Hex(),
+			"info": map[string]interface{}{
+				"pubkey": pubkey.Hex(),
+			},
 		}
 		body, _ := json.Marshal(otherConfig)
 		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/relay/otherrelay", secretKey, body)
@@ -385,6 +390,9 @@ func TestAPIHandler_UpdateRelay(t *testing.T) {
 			"host":   "relay.example.com",
 			"schema": "otherrelay", // Duplicate
 			"secret": secretKey.Hex(),
+			"info": map[string]interface{}{
+				"pubkey": pubkey.Hex(),
+			},
 		}
 		body, _ = json.Marshal(updateConfig)
 		req = createAuthenticatedRequest(http.MethodPut, "http://api.example.com/relay/testrelay", secretKey, body)
@@ -399,12 +407,11 @@ func TestAPIHandler_UpdateRelay(t *testing.T) {
 }
 
 func TestAPIHandler_PatchRelay(t *testing.T) {
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	// Create initial relay with full config
 	initialConfig := map[string]interface{}{
@@ -494,6 +501,9 @@ func TestAPIHandler_PatchRelay(t *testing.T) {
 			"host":   "other.example.com",
 			"schema": "anotherrelay",
 			"secret": secretKey.Hex(),
+			"info": map[string]interface{}{
+				"pubkey": pubkey.Hex(),
+			},
 		}
 		body, _ := json.Marshal(otherConfig)
 		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/relay/anotherrelay", secretKey, body)
@@ -550,12 +560,11 @@ func TestAPIHandler_PatchRelay(t *testing.T) {
 }
 
 func TestAPIHandler_DeleteRelay(t *testing.T) {
-	configDir := t.TempDir()
+	configDir := useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	// Create a relay to delete
 	config := map[string]interface{}{
@@ -605,12 +614,11 @@ func TestAPIHandler_DeleteRelay(t *testing.T) {
 }
 
 func TestAPIHandler_ListRelayMembers(t *testing.T) {
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	t.Run("list members from loaded relay instance", func(t *testing.T) {
 		member1 := nostr.Generate().Public()
@@ -681,11 +689,13 @@ func TestAPIHandler_ListRelayMembers(t *testing.T) {
 
 		config := &Config{
 			Host:   "members.example.com",
-			Schema: "members_" + RandomString(8),
+			Schema: "members_" + strings.ToLower(RandomString(8)),
 			Secret: relaySecret.Hex(),
 		}
+		config.Info.Pubkey = nostr.Generate().Public().Hex()
+		config.path = ConfigPathFromName(ConfigNameFromId("fallback"))
 
-		if err := api.saveConfig(api.configPath("fallback"), config); err != nil {
+		if err := config.Save(); err != nil {
 			t.Fatalf("failed to save config: %v", err)
 		}
 
@@ -779,12 +789,11 @@ func TestAPIHandler_ListRelayMembers(t *testing.T) {
 }
 
 func TestAPIHandler_MethodNotAllowed(t *testing.T) {
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	t.Run("GET method not allowed", func(t *testing.T) {
 		req := createAuthenticatedRequest(http.MethodGet, "http://api.example.com/relay/test", secretKey, nil)
@@ -799,12 +808,11 @@ func TestAPIHandler_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAPIHandler_InvalidPath(t *testing.T) {
-	configDir := t.TempDir()
+	useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	t.Run("invalid path returns not found", func(t *testing.T) {
 		req := createAuthenticatedRequest(http.MethodPost, "http://api.example.com/invalid/path", secretKey, []byte("{}"))
@@ -830,12 +838,11 @@ func TestAPIHandler_InvalidPath(t *testing.T) {
 }
 
 func TestAPIHandler_ConfigValidation(t *testing.T) {
-	configDir := t.TempDir()
+	configDir := useTestConfigDir(t)
 
 	secretKey := nostr.Generate()
 	pubkey := secretKey.Public()
-	whitelist := pubkey.Hex()
-	api := NewAPIHandler(whitelist, configDir)
+	api := newTestAPIHandler(t, pubkey.Hex())
 
 	t.Run("invalid info.pubkey", func(t *testing.T) {
 		config := map[string]interface{}{
@@ -976,9 +983,33 @@ func createAuthenticatedRequest(method, url string, secretKey nostr.SecretKey, b
 	return req
 }
 
+// setTestEnv overrides a value in the package-level env map. Env memoizes
+// os.Environ via sync.Once, so once the test binary has started, os.Setenv is
+// ignored — mutating the cached map directly is the only way to change config
+// for an individual test. Safe because tests in this package run sequentially.
+func setTestEnv(key, value string) {
+	_ = Env("DATA") // ensure the env map has been initialized
+	env[key] = value
+}
+
+// useTestConfigDir points Env("CONFIG") at a fresh temp dir for this test.
+func useTestConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	setTestEnv("CONFIG", dir)
+	return dir
+}
+
+// newTestAPIHandler builds a handler whose whitelist contains the given pubkeys.
+func newTestAPIHandler(t *testing.T, whitelist ...string) *APIHandler {
+	t.Helper()
+	setTestEnv("API_WHITELIST", strings.Join(whitelist, ","))
+	return NewAPIHandler()
+}
+
 func TestNewAPIHandler(t *testing.T) {
 	t.Run("empty whitelist", func(t *testing.T) {
-		api := NewAPIHandler("", "/tmp")
+		api := newTestAPIHandler(t)
 		if len(api.whitelist) != 0 {
 			t.Error("expected empty whitelist")
 		}
@@ -986,7 +1017,7 @@ func TestNewAPIHandler(t *testing.T) {
 
 	t.Run("single pubkey", func(t *testing.T) {
 		pubkey := nostr.Generate().Public().Hex()
-		api := NewAPIHandler(pubkey, "/tmp")
+		api := newTestAPIHandler(t, pubkey)
 		if len(api.whitelist) != 1 {
 			t.Error("expected 1 entry in whitelist")
 		}
@@ -998,8 +1029,8 @@ func TestNewAPIHandler(t *testing.T) {
 	t.Run("multiple pubkeys", func(t *testing.T) {
 		pubkey1 := nostr.Generate().Public().Hex()
 		pubkey2 := nostr.Generate().Public().Hex()
-		whitelist := fmt.Sprintf("%s, %s", pubkey1, pubkey2)
-		api := NewAPIHandler(whitelist, "/tmp")
+		setTestEnv("API_WHITELIST", fmt.Sprintf("%s, %s", pubkey1, pubkey2))
+		api := NewAPIHandler()
 		if len(api.whitelist) != 2 {
 			t.Error("expected 2 entries in whitelist")
 		}
@@ -1010,8 +1041,8 @@ func TestNewAPIHandler(t *testing.T) {
 
 	t.Run("whitespace trimming", func(t *testing.T) {
 		pubkey := nostr.Generate().Public().Hex()
-		whitelist := "  " + pubkey + "  "
-		api := NewAPIHandler(whitelist, "/tmp")
+		setTestEnv("API_WHITELIST", "  "+pubkey+"  ")
+		api := NewAPIHandler()
 		if len(api.whitelist) != 1 {
 			t.Error("expected 1 entry in whitelist after trimming")
 		}

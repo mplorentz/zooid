@@ -157,53 +157,64 @@ func TestConfig_MemberRole(t *testing.T) {
 	}
 }
 
+// validBlossomTestConfig returns a config that passes Validate except for any
+// Blossom settings the caller overrides, so blossom validation can be exercised
+// in isolation.
+func validBlossomTestConfig() *Config {
+	sk := nostr.Generate()
+	c := &Config{
+		Host:   "r.example.com",
+		Schema: "myrelay",
+		Secret: sk.Hex(),
+	}
+	c.Info.Pubkey = sk.Public().Hex()
+	return c
+}
+
 func TestValidateBlossomFileStorage(t *testing.T) {
-	t.Run("blossom disabled skips validation", func(t *testing.T) {
-		c := &Config{}
-		c.Blossom.Enabled = false
-		c.Blossom.Backend = "s3"
-		normalizeBlossomConfig(c)
-		if err := validateBlossomFileStorage(c); err != nil {
+	t.Run("empty adapter defaults to local", func(t *testing.T) {
+		c := validBlossomTestConfig()
+		c.Blossom.Enabled = true
+		if err := c.Validate(); err != nil {
 			t.Fatalf("expected nil, got %v", err)
+		}
+		if c.Blossom.Adapter != "local" {
+			t.Errorf("expected adapter normalized to local, got %q", c.Blossom.Adapter)
 		}
 	})
 
 	t.Run("local storage needs no s3 fields", func(t *testing.T) {
-		c := &Config{}
+		c := validBlossomTestConfig()
 		c.Blossom.Enabled = true
-		c.Blossom.Backend = "local"
-		normalizeBlossomConfig(c)
-		if err := validateBlossomFileStorage(c); err != nil {
+		c.Blossom.Adapter = "local"
+		if err := c.Validate(); err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
 	})
 
 	t.Run("s3 requires bucket region keys and secret", func(t *testing.T) {
-		c := &Config{}
+		c := validBlossomTestConfig()
 		c.Blossom.Enabled = true
-		c.Blossom.Backend = "s3"
+		c.Blossom.Adapter = "s3"
 		c.Blossom.S3.Region = "us-east-1"
-		normalizeBlossomConfig(c)
-		if err := validateBlossomFileStorage(c); err == nil {
+		if err := c.Validate(); err == nil {
 			t.Fatal("expected error for missing bucket and credentials")
 		}
 
 		c.Blossom.S3.Bucket = "b"
 		c.Blossom.S3.AccessKey = "k"
 		c.Blossom.S3.SecretKey = "s"
-		normalizeBlossomConfig(c)
-		if err := validateBlossomFileStorage(c); err != nil {
+		if err := c.Validate(); err != nil {
 			t.Fatalf("expected nil with all s3 fields set, got %v", err)
 		}
 	})
 
-	t.Run("invalid backend value", func(t *testing.T) {
-		c := &Config{}
+	t.Run("invalid adapter value", func(t *testing.T) {
+		c := validBlossomTestConfig()
 		c.Blossom.Enabled = true
-		c.Blossom.Backend = "nfs"
-		normalizeBlossomConfig(c)
-		if err := validateBlossomFileStorage(c); err == nil {
-			t.Fatal("expected error for unknown backend")
+		c.Blossom.Adapter = "nfs"
+		if err := c.Validate(); err == nil {
+			t.Fatal("expected error for unknown adapter")
 		}
 	})
 }
@@ -223,7 +234,7 @@ pubkey = "` + sk.Public().Hex() + `"
 
 [blossom]
 enabled = true
-backend = "s3"
+adapter = "s3"
 
 [blossom.s3]
 region = "auto"
@@ -243,7 +254,7 @@ endpoint = "http://127.0.0.1:9000"
 	if cfg.Blossom.S3.SecretKey != "topsecret" {
 		t.Errorf("expected s3 secret_key retained in struct, got %q", cfg.Blossom.S3.SecretKey)
 	}
-	if cfg.Blossom.Backend != "s3" {
-		t.Errorf("backend: got %q", cfg.Blossom.Backend)
+	if cfg.Blossom.Adapter != "s3" {
+		t.Errorf("adapter: got %q", cfg.Blossom.Adapter)
 	}
 }

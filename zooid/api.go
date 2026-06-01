@@ -2,8 +2,10 @@ package zooid
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"sort"
@@ -163,7 +165,7 @@ func (api *APIHandler) putRelay(w http.ResponseWriter, r *http.Request) {
 	name := ConfigNameFromId(id)
 	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
-		writeError(w, http.StatusConflict, "relay not found")
+		writeError(w, http.StatusNotFound, "relay not found")
 		return
 	}
 
@@ -193,7 +195,7 @@ func (api *APIHandler) patchRelay(w http.ResponseWriter, r *http.Request) {
 	name := ConfigNameFromId(id)
 	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
-		writeError(w, http.StatusConflict, "relay not found")
+		writeError(w, http.StatusNotFound, "relay not found")
 		return
 	}
 
@@ -248,6 +250,10 @@ func (api *APIHandler) applyPatch(config *Config, patch map[string]interface{}) 
 		return err
 	}
 
+	// Preserve unexported fields, which don't survive the JSON round-trip
+	patched.path = config.path
+	patched.secret = config.secret
+
 	// Copy patched values to original config
 	*config = patched
 	return nil
@@ -284,7 +290,7 @@ func (api *APIHandler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 	name := ConfigNameFromId(id)
 	path := ConfigPathFromName(name)
 	if _, err := os.Stat(path); err != nil {
-		writeError(w, http.StatusConflict, "relay not found")
+		writeError(w, http.StatusNotFound, "relay not found")
 		return
 	}
 
@@ -303,7 +309,7 @@ func (api *APIHandler) listRelayMembers(w http.ResponseWriter, r *http.Request) 
 	name := ConfigNameFromId(id)
 	members, err := api.resolveRelayMembers(name)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "relay not found")
 		} else {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load relay members: %v", err))
