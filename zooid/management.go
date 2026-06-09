@@ -1,7 +1,9 @@
 package zooid
 
 import (
+  "slices"
 	"context"
+	"errors"
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip86"
@@ -127,10 +129,6 @@ func (m *ManagementStore) PubkeyIsBanned(pubkey nostr.PubKey) bool {
 
 // Admins
 
-func (m *ManagementStore) IsAdmin(pubkey nostr.PubKey) bool {
-	return m.Config.IsOwner(pubkey) || m.Config.IsSelf(pubkey)
-}
-
 func (m *ManagementStore) GetAdmins() []nostr.PubKey {
 	members := make([]nostr.PubKey, 0)
 
@@ -145,6 +143,10 @@ func (m *ManagementStore) GetAdmins() []nostr.PubKey {
 	}
 
 	return members
+}
+
+func (m *ManagementStore) IsAdmin(pubkey nostr.PubKey) bool {
+	return slices.Contains(m.GetAdmins(), pubkey)
 }
 
 // Membership
@@ -195,6 +197,10 @@ func (m *ManagementStore) AddMember(pubkey nostr.PubKey) error {
 }
 
 func (m *ManagementStore) RemoveMember(pubkey nostr.PubKey) error {
+	if m.IsAdmin(pubkey) {
+		return errors.New("Can't remove permanent admins from relay.")
+	}
+
 	membersEvent := m.Events.GetOrCreateRelayMembersList()
 
 	if membersEvent.Tags.FindWithValue("member", pubkey.Hex()) != nil {
