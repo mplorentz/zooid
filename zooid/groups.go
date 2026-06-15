@@ -227,6 +227,10 @@ func (g *GroupStore) HasAccess(h string, pubkey nostr.PubKey) bool {
 }
 
 func (g *GroupStore) IsGroupEvent(event nostr.Event) bool {
+	if !g.Config.Groups.Enabled {
+		return false
+	}
+
 	if slices.Contains(nip29.MetadataEventKinds, event.Kind) {
 		return true
 	}
