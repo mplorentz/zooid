@@ -50,7 +50,7 @@ Zooid supports a few environment variables, which configure shared resources lik
 - `MEDIA` - where to store blossom media files. Defaults to `./media`.
 - `DATA` - where to store database files. Defaults to `./data`.
 - `API_HOST` - the hostname on which to expose the management API. If not set, the API is disabled.
-- `API_WHITELIST` - a comma-separated list of nostr hex pubkeys authorized to use the management API. Required when `API_HOST` is set.
+- `API_WHITELIST` - a comma-separated list of nostr hex pubkeys authorized to use the management API.
 - `PPROF_ADDR` - an http host to serve pprof stats on.
 
 ## Configuration
@@ -133,7 +133,12 @@ A special `[roles.member]` heading may be used to configure policies for all rel
 - `api_key` - a key identifying this relay, assigned by the Livekit server.
 - `api_secret` - a secret key authenticating this relay, assigned by the Livekit server.
 
-On your LiveKit server you should also set up a webhook that points to `https://yourrelay.com/.well-known/nip29/livekit/webhook`. This allows LiveKit to notify your relay when people join rooms so it can publish a kind 39004 event.
+On your LiveKit server you should also set up a webhook so LiveKit can notify the relay when people join or leave rooms; the relay uses these notifications to publish a kind 39004 presence event. How you point the webhook depends on how many relays share a LiveKit project:
+
+- **One relay, or a dedicated LiveKit project per relay** — point the webhook at that relay's own `https://yourrelay.com/.well-known/nip29/livekit/webhook`.
+- **Several relays sharing one LiveKit project** — point the webhook at the management API's `https://api.relayplatform.com/.well-known/nip29/livekit/webhook` instead. zooid stamps each room's metadata with the owning relay's `schema` when it creates the room, so this shared endpoint routes every event to the relay that owns the room. This requires `API_HOST` to be set.
+
+Either way the webhook is authenticated by LiveKit's own request signature (signed with the relay's `api_secret`) rather than NIP 98, so the shared endpoint is exempt from the `API_WHITELIST`. Configure LiveKit to sign webhooks with the same `api_key`/`api_secret` the relay uses, or the relay will reject them.
 
 ### Example
 
@@ -176,7 +181,7 @@ can_manage = true
 
 ## API
 
-When `API_HOST` and `API_WHITELIST` are configured, a JSON REST API is available for managing virtual relays remotely. All API requests must be authenticated using [NIP 98](https://github.com/nostr-protocol/nips/blob/master/98.md) HTTP AUTH.
+When `API_HOST` is configured, a JSON REST API is available for managing virtual relays remotely. All API requests must be authenticated using [NIP 98](https://github.com/nostr-protocol/nips/blob/master/98.md) HTTP AUTH signed by a pubkey listed in `API_WHITELIST`.
 
 The API accepts JSON config objects and stores them as TOML files in the `CONFIG` directory. Configs are validated for required fields (`host`, `schema`, `secret`) and duplicate checking (`schema` and `host` must be unique across all relays).
 

@@ -1,6 +1,7 @@
 package zooid
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,9 @@ func NewAPIHandler() *APIHandler {
 	mux.HandleFunc("PATCH /relay/{id}", api.auth(api.patchRelay))
 	mux.HandleFunc("DELETE /relay/{id}", api.auth(api.deleteRelay))
 	mux.HandleFunc("GET /relay/{id}/members", api.auth(api.listRelayMembers))
+
+	// Skip auth, the handler checks the webhook signature itself
+	mux.HandleFunc("POST /.well-known/nip29/livekit/webhook", api.livekitWebhook)
 
 	api.mux = mux
 
@@ -360,4 +364,45 @@ func collectMembers(management *ManagementStore) []string {
 	members := Keys(memberSet)
 	sort.Strings(members)
 	return members
+}
+
+// LiveKit webhook
+
+// LiveKit webhooks are registered statically, so we add the relay's schema as metadata
+// to the room and handle webhooks at the top level.
+func (api *APIHandler) livekitWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024*1024))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	// Read the relay schema from the room metadata. This is parsed before
+	// verification, but the instance handler below re-checks the signature over
+	// the whole body (metadata included) with that relay's key, so a forged
+	// schema cannot pass.
+	var probe struct {
+		Room struct {
+			Metadata string `json:"metadata"`
+		} `json:"room"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid webhook body")
+		return
+	}
+
+	schema := strings.TrimSpace(probe.Room.Metadata)
+	if schema == "" {
+		writeError(w, http.StatusBadRequest, "missing room metadata")
+		return
+	}
+
+	instance, ok := DispatchBySchema(schema)
+	if !ok {
+		writeError(w, http.StatusNotFound, "relay not found")
+		return
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	instance.livekitWebhookHandler(w, r)
 }

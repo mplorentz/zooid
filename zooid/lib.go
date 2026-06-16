@@ -28,6 +28,19 @@ func Dispatch(hostname string) (*Instance, bool) {
 	return instance, exists
 }
 
+func DispatchBySchema(schema string) (*Instance, bool) {
+	instancesMux.RLock()
+	defer instancesMux.RUnlock()
+
+	for _, instance := range instancesByName {
+		if instance.Config.Schema == schema && !instance.Config.Inactive {
+			return instance, true
+		}
+	}
+
+	return nil, false
+}
+
 func Start() {
 	dataDir := Env("DATA")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
