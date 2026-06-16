@@ -50,7 +50,7 @@ func generateLivekitServerToken(apiKey, apiSecret string) string {
 	return jwt
 }
 
-func ensureLivekitRoom(apiKey, apiSecret, serverURL, roomName string) error {
+func ensureLivekitRoom(apiKey, apiSecret, serverURL, roomName, metadata string) error {
 	roomKey := serverURL + "'" + roomName
 
 	livekitRoomsMu.RLock()
@@ -63,8 +63,10 @@ func ensureLivekitRoom(apiKey, apiSecret, serverURL, roomName string) error {
 	httpURL := strings.Replace(strings.Replace(serverURL, "wss://", "https://", 1), "ws://", "http://", 1)
 	url := fmt.Sprintf("%s/twirp/livekit.RoomService/CreateRoom", httpURL)
 
+	// Use the relay's schema as room metadata so we can use the same livekit creds for multiple relay
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"name": roomName,
+		"name":     roomName,
+		"metadata": metadata,
 	})
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
@@ -214,7 +216,7 @@ func (instance *Instance) livekitTokenHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := ensureLivekitRoom(cfg.APIKey, cfg.APISecret, cfg.ServerURL, groupId); err != nil {
+	if err := ensureLivekitRoom(cfg.APIKey, cfg.APISecret, cfg.ServerURL, groupId, instance.Config.Schema); err != nil {
 		http.Error(w, "failed to create room", http.StatusInternalServerError)
 		return
 	}
