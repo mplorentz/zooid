@@ -21,6 +21,7 @@ const (
 	RELAY_INVITE        = 28935
 	RELAY_LEAVE         = 28936
 	PUSH_SUBSCRIPTION   = 30390
+	RELAY_ROLE          = 33534
 	BANNED_PUBKEYS      = "zooid/banned_pubkeys"
 	BANNED_EVENTS       = "zooid/banned_events"
 )
@@ -42,6 +43,7 @@ func IsReadOnlyEvent(event nostr.Event) bool {
 		RELAY_ADD_MEMBER,
 		RELAY_REMOVE_MEMBER,
 		RELAY_MEMBERS,
+		RELAY_ROLE,
 	}
 
 	return slices.Contains(readOnlyEventKinds, event.Kind)

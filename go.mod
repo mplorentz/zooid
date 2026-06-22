@@ -11,7 +11,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/gosimple/slug v1.15.0
 	github.com/livekit/protocol v1.43.5-0.20260114074149-a8bb8204ce69
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/spf13/afero v1.15.0
@@ -44,6 +43,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
+	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.13 // indirect
@@ -58,7 +58,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/google/cel-go v0.25.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.7 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -132,4 +131,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260505183642-fefc85d50080
+replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260622165044-a525b660543d

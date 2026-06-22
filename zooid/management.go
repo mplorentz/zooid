@@ -1,9 +1,12 @@
 package zooid
 
 import (
-  "slices"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip86"
@@ -231,6 +234,187 @@ func (m *ManagementStore) RemoveMember(pubkey nostr.PubKey) error {
 	return nil
 }
 
+// Roles
+
+func (m *ManagementStore) GetRoleDefinition(id string) (nostr.Event, bool) {
+	filter := nostr.Filter{
+		Kinds: []nostr.Kind{RELAY_ROLE},
+		Tags:  nostr.TagMap{"d": []string{id}},
+	}
+
+	for event := range m.Events.QueryEvents(filter, 1) {
+		return event, true
+	}
+
+	return nostr.Event{}, false
+}
+
+func (m *ManagementStore) buildRoleEvent(id, label, description string, color, order int) (nostr.Event, error) {
+	if id == "" {
+		return nostr.Event{}, errors.New("role id is required")
+	}
+
+	if color < 0 || color > 255 {
+		return nostr.Event{}, errors.New("color must be a hue between 0 and 255")
+	}
+
+	tags := nostr.Tags{
+		nostr.Tag{"-"},
+		nostr.Tag{"d", id},
+	}
+
+	if label != "" {
+		tags = append(tags, nostr.Tag{"label", label})
+	}
+
+	if description != "" {
+		tags = append(tags, nostr.Tag{"description", description})
+	}
+
+	// color and order are optional integers. The nip86 layer can't distinguish an omitted
+	// value from a zero, so we only persist them when they're explicitly non-zero, letting
+	// clients fall back to their own defaults otherwise.
+	if color != 0 {
+		tags = append(tags, nostr.Tag{"color", strconv.Itoa(color)})
+	}
+
+	if order != 0 {
+		tags = append(tags, nostr.Tag{"order", strconv.Itoa(order)})
+	}
+
+	return nostr.Event{
+		Kind:      RELAY_ROLE,
+		CreatedAt: nostr.Now(),
+		Tags:      tags,
+	}, nil
+}
+
+func (m *ManagementStore) CreateRole(id, label, description string, color, order int) error {
+	if _, exists := m.GetRoleDefinition(id); exists {
+		return fmt.Errorf("role %q already exists", id)
+	}
+
+	event, err := m.buildRoleEvent(id, label, description, color, order)
+	if err != nil {
+		return err
+	}
+
+	return m.Events.SignAndStoreEvent(&event, true)
+}
+
+func (m *ManagementStore) EditRole(id, label, description string, color, order int) error {
+	if _, exists := m.GetRoleDefinition(id); !exists {
+		return fmt.Errorf("role %q does not exist", id)
+	}
+
+	event, err := m.buildRoleEvent(id, label, description, color, order)
+	if err != nil {
+		return err
+	}
+
+	return m.Events.SignAndStoreEvent(&event, true)
+}
+
+func (m *ManagementStore) DeleteRole(id string) error {
+	if event, exists := m.GetRoleDefinition(id); exists {
+		if err := m.Events.DeleteEvent(event.ID); err != nil {
+			return err
+		}
+	}
+
+	return m.removeRoleFromMembers(id)
+}
+
+// Role assignment
+
+func (m *ManagementStore) GetAssignedRoles(pubkey nostr.PubKey) []string {
+	tag := m.Events.GetOrCreateRelayMembersList().Tags.FindWithValue("member", pubkey.Hex())
+
+	if len(tag) < 3 {
+		return []string{}
+	}
+
+	return slices.Clone(tag[2:])
+}
+
+func (m *ManagementStore) AssignRole(pubkey nostr.PubKey, roleID string) error {
+	if _, exists := m.GetRoleDefinition(roleID); !exists {
+		return fmt.Errorf("role %q does not exist", roleID)
+	}
+
+	// A role is meaningless without membership, so ensure the pubkey is a member first.
+	if err := m.AddMember(pubkey); err != nil {
+		return err
+	}
+
+	roles := m.GetAssignedRoles(pubkey)
+
+	if slices.Contains(roles, roleID) {
+		return nil
+	}
+
+	return m.setAssignedRoles(pubkey, append(roles, roleID))
+}
+
+func (m *ManagementStore) UnassignRole(pubkey nostr.PubKey, roleID string) error {
+	roles := m.GetAssignedRoles(pubkey)
+
+	if !slices.Contains(roles, roleID) {
+		return nil
+	}
+
+	return m.setAssignedRoles(pubkey, Remove(roles, roleID))
+}
+
+func (m *ManagementStore) setAssignedRoles(pubkey nostr.PubKey, roleIDs []string) error {
+	membersEvent := m.Events.GetOrCreateRelayMembersList()
+
+	found := false
+	tags := make(nostr.Tags, 0, len(membersEvent.Tags))
+	for _, tag := range membersEvent.Tags {
+		if len(tag) >= 2 && tag[0] == "member" && tag[1] == pubkey.Hex() {
+			found = true
+			tags = append(tags, append(nostr.Tag{"member", pubkey.Hex()}, roleIDs...))
+		} else {
+			tags = append(tags, tag)
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	membersEvent.CreatedAt = nostr.Now()
+	membersEvent.Tags = tags
+
+	return m.Events.SignAndStoreEvent(&membersEvent, true)
+}
+
+func (m *ManagementStore) removeRoleFromMembers(roleID string) error {
+	membersEvent := m.Events.GetOrCreateRelayMembersList()
+
+	changed := false
+	tags := make(nostr.Tags, 0, len(membersEvent.Tags))
+	for _, tag := range membersEvent.Tags {
+		if len(tag) >= 3 && tag[0] == "member" && slices.Contains(tag[2:], roleID) {
+			changed = true
+			roles := Filter(tag[2:], func(r string) bool { return r != roleID })
+			tags = append(tags, append(nostr.Tag{"member", tag[1]}, roles...))
+		} else {
+			tags = append(tags, tag)
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	membersEvent.CreatedAt = nostr.Now()
+	membersEvent.Tags = tags
+
+	return m.Events.SignAndStoreEvent(&membersEvent, true)
+}
+
 // Banning
 
 func (m *ManagementStore) BanPubkey(pubkey nostr.PubKey, reason string) error {
@@ -385,5 +569,25 @@ func (m *ManagementStore) Enable(instance *Instance) {
 
 	instance.Relay.ManagementAPI.ListBannedEvents = func(ctx context.Context) ([]nip86.IDReason, error) {
 		return m.GetBannedEventItems(), nil
+	}
+
+	instance.Relay.ManagementAPI.CreateRole = func(ctx context.Context, id, label, description string, color, order int) error {
+		return m.CreateRole(id, label, description, color, order)
+	}
+
+	instance.Relay.ManagementAPI.EditRole = func(ctx context.Context, id, label, description string, color, order int) error {
+		return m.EditRole(id, label, description, color, order)
+	}
+
+	instance.Relay.ManagementAPI.DeleteRole = func(ctx context.Context, id string) error {
+		return m.DeleteRole(id)
+	}
+
+	instance.Relay.ManagementAPI.AssignRole = func(ctx context.Context, pubkey nostr.PubKey, roleID string) error {
+		return m.AssignRole(pubkey, roleID)
+	}
+
+	instance.Relay.ManagementAPI.UnassignRole = func(ctx context.Context, pubkey nostr.PubKey, roleID string) error {
+		return m.UnassignRole(pubkey, roleID)
 	}
 }

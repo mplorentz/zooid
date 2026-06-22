@@ -12,6 +12,7 @@ func createTestManagementStore() *ManagementStore {
 		Host:   "test.com",
 		secret: nostr.Generate(),
 	}
+	config.Info.Pubkey = nostr.Generate().Public().Hex()
 	schema := &Schema{Name: "test_" + RandomString(8)}
 	relay := khatru.NewRelay()
 	events := &EventStore{
@@ -160,6 +161,232 @@ func TestManagementStore_AllowEvent(t *testing.T) {
 
 	if mgmt.EventIsBanned(eventID) {
 		t.Error("EventIsBanned() should return false after allowing")
+	}
+}
+
+func roleTagValue(event nostr.Event, key string) string {
+	tag := event.Tags.Find(key)
+	if len(tag) < 2 {
+		return ""
+	}
+
+	return tag[1]
+}
+
+func TestManagementStore_CreateRole(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("king", "King", "ruler of the relay", 37, 1); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	event, ok := mgmt.GetRoleDefinition("king")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the created role")
+	}
+
+	if event.Kind != RELAY_ROLE {
+		t.Errorf("role event kind = %v, want %v", event.Kind, RELAY_ROLE)
+	}
+
+	if !HasTag(event.Tags, "-") {
+		t.Error("role event should carry a NIP 70 \"-\" tag")
+	}
+
+	if got := roleTagValue(event, "d"); got != "king" {
+		t.Errorf("d tag = %q, want %q", got, "king")
+	}
+
+	if got := roleTagValue(event, "label"); got != "King" {
+		t.Errorf("label tag = %q, want %q", got, "King")
+	}
+
+	if got := roleTagValue(event, "description"); got != "ruler of the relay" {
+		t.Errorf("description tag = %q, want %q", got, "ruler of the relay")
+	}
+
+	if got := roleTagValue(event, "color"); got != "37" {
+		t.Errorf("color tag = %q, want %q", got, "37")
+	}
+
+	if got := roleTagValue(event, "order"); got != "1" {
+		t.Errorf("order tag = %q, want %q", got, "1")
+	}
+
+	if event.PubKey != mgmt.Config.GetSelf() {
+		t.Error("role event should be signed by the relay self key")
+	}
+}
+
+func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err == nil {
+		t.Error("CreateRole() should error when the role already exists")
+	}
+}
+
+func TestManagementStore_CreateRole_OmitsEmptyAndZero(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("plain", "", "", 0, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	event, ok := mgmt.GetRoleDefinition("plain")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the created role")
+	}
+
+	for _, key := range []string{"label", "description", "color", "order"} {
+		if HasTag(event.Tags, key) {
+			t.Errorf("role event should omit empty/zero %q tag", key)
+		}
+	}
+}
+
+func TestManagementStore_CreateRole_InvalidColor(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("king", "King", "", 300, 0); err == nil {
+		t.Error("CreateRole() should error on out-of-range color")
+	}
+
+	if _, ok := mgmt.GetRoleDefinition("king"); ok {
+		t.Error("invalid role should not have been stored")
+	}
+}
+
+func TestManagementStore_EditRole(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.EditRole("king", "King", "", 0, 0); err == nil {
+		t.Error("EditRole() should error when the role does not exist")
+	}
+
+	if err := mgmt.CreateRole("king", "King", "ruler", 10, 1); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	if err := mgmt.EditRole("king", "Monarch", "the boss", 200, 2); err != nil {
+		t.Fatalf("EditRole() error = %v", err)
+	}
+
+	event, ok := mgmt.GetRoleDefinition("king")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the edited role")
+	}
+
+	if got := roleTagValue(event, "label"); got != "Monarch" {
+		t.Errorf("label tag = %q, want %q", got, "Monarch")
+	}
+
+	if got := roleTagValue(event, "color"); got != "200" {
+		t.Errorf("color tag = %q, want %q", got, "200")
+	}
+
+	// Editing replaces the definition, so there should only be a single role event.
+	count := 0
+	for range mgmt.Events.QueryEvents(nostr.Filter{Kinds: []nostr.Kind{RELAY_ROLE}}, 0) {
+		count++
+	}
+	if count != 1 {
+		t.Errorf("expected 1 role event after edit, got %d", count)
+	}
+}
+
+func TestManagementStore_AssignAndUnassignRole(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	pubkey := nostr.Generate().Public()
+
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	if err := mgmt.AssignRole(pubkey, "king"); err != nil {
+		t.Fatalf("AssignRole() error = %v", err)
+	}
+
+	// Assigning a role implies membership.
+	if !mgmt.IsMember(pubkey) {
+		t.Error("AssignRole() should make the pubkey a member")
+	}
+
+	if roles := mgmt.GetAssignedRoles(pubkey); len(roles) != 1 || roles[0] != "king" {
+		t.Errorf("GetAssignedRoles() = %v, want [king]", roles)
+	}
+
+	// Assignment is idempotent and must not duplicate the role.
+	if err := mgmt.AssignRole(pubkey, "king"); err != nil {
+		t.Fatalf("AssignRole() repeat error = %v", err)
+	}
+
+	if roles := mgmt.GetAssignedRoles(pubkey); len(roles) != 1 {
+		t.Errorf("GetAssignedRoles() after repeat = %v, want one entry", roles)
+	}
+
+	if err := mgmt.UnassignRole(pubkey, "king"); err != nil {
+		t.Fatalf("UnassignRole() error = %v", err)
+	}
+
+	if roles := mgmt.GetAssignedRoles(pubkey); len(roles) != 0 {
+		t.Errorf("GetAssignedRoles() after unassign = %v, want empty", roles)
+	}
+
+	// Unassigning a role does not revoke membership.
+	if !mgmt.IsMember(pubkey) {
+		t.Error("UnassignRole() should leave the pubkey a member")
+	}
+}
+
+func TestManagementStore_AssignRole_UnknownRole(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	pubkey := nostr.Generate().Public()
+
+	if err := mgmt.AssignRole(pubkey, "ghost"); err == nil {
+		t.Error("AssignRole() should error for an undefined role")
+	}
+
+	if mgmt.IsMember(pubkey) {
+		t.Error("failed AssignRole() should not add membership")
+	}
+}
+
+func TestManagementStore_DeleteRole(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	pubkey := nostr.Generate().Public()
+
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	if err := mgmt.AssignRole(pubkey, "king"); err != nil {
+		t.Fatalf("AssignRole() error = %v", err)
+	}
+
+	if err := mgmt.DeleteRole("king"); err != nil {
+		t.Fatalf("DeleteRole() error = %v", err)
+	}
+
+	if _, ok := mgmt.GetRoleDefinition("king"); ok {
+		t.Error("GetRoleDefinition() should return false after deletion")
+	}
+
+	// Deleting a role must strip dangling assignments from the members list.
+	if roles := mgmt.GetAssignedRoles(pubkey); len(roles) != 0 {
+		t.Errorf("GetAssignedRoles() after delete = %v, want empty", roles)
+	}
+
+	// The pubkey remains a member, just without the deleted role.
+	if !mgmt.IsMember(pubkey) {
+		t.Error("DeleteRole() should leave the pubkey a member")
 	}
 }
 
