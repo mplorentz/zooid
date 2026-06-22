@@ -1,6 +1,7 @@
 package zooid
 
 import (
+	"strconv"
 	"testing"
 
 	"fiatjaf.com/nostr"
@@ -387,6 +388,53 @@ func TestManagementStore_DeleteRole(t *testing.T) {
 	// The pubkey remains a member, just without the deleted role.
 	if !mgmt.IsMember(pubkey) {
 		t.Error("DeleteRole() should leave the pubkey a member")
+	}
+}
+
+func TestManagementStore_DeleteRole_BroadcastsDeletion(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	role, ok := mgmt.GetRoleDefinition("king")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the created role")
+	}
+
+	if err := mgmt.DeleteRole("king"); err != nil {
+		t.Fatalf("DeleteRole() error = %v", err)
+	}
+
+	filter := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}}
+
+	var deletion *nostr.Event
+	for event := range mgmt.Events.QueryEvents(filter, 1) {
+		e := event
+		deletion = &e
+	}
+
+	if deletion == nil {
+		t.Fatal("DeleteRole() should store a deletion event")
+	}
+
+	address := nostr.EntityPointer{
+		Kind:       RELAY_ROLE,
+		PublicKey:  role.PubKey,
+		Identifier: "king",
+	}.AsTagReference()
+
+	if tag := deletion.Tags.FindWithValue("e", role.ID.Hex()); tag == nil {
+		t.Errorf("deletion event missing e tag for %s", role.ID.Hex())
+	}
+
+	if tag := deletion.Tags.FindWithValue("a", address); tag == nil {
+		t.Errorf("deletion event missing a tag for %s", address)
+	}
+
+	if tag := deletion.Tags.FindWithValue("k", strconv.Itoa(RELAY_ROLE)); tag == nil {
+		t.Errorf("deletion event missing k tag for kind %d", RELAY_ROLE)
 	}
 }
 

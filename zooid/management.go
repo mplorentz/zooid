@@ -320,6 +320,26 @@ func (m *ManagementStore) DeleteRole(id string) error {
 		if err := m.Events.DeleteEvent(event.ID); err != nil {
 			return err
 		}
+
+  	address := nostr.EntityPointer{
+  		Kind:       event.Kind,
+  		PublicKey:  event.PubKey,
+  		Identifier: event.Tags.GetD(),
+  	}.AsTagReference()
+
+  	event := nostr.Event{
+  		Kind:      nostr.KindDeletion,
+  		CreatedAt: nostr.Now(),
+  		Tags: nostr.Tags{
+  			nostr.Tag{"e", event.ID.Hex()},
+  			nostr.Tag{"a", address},
+  			nostr.Tag{"k", strconv.Itoa(int(event.Kind))},
+  		},
+  	}
+
+		if err := m.Events.SignAndStoreEvent(&event, true); err != nil {
+			return err
+		}
 	}
 
 	return m.removeRoleFromMembers(id)
