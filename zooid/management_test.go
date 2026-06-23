@@ -438,6 +438,47 @@ func TestManagementStore_DeleteRole_BroadcastsDeletion(t *testing.T) {
 	}
 }
 
+func TestManagementStore_SignEvent_AllowedKind(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	tags := nostr.Tags{nostr.Tag{"d", "zooid/test"}}
+
+	event, err := mgmt.SignEvent(nostr.KindApplicationSpecificData, 0, tags, "hello")
+	if err != nil {
+		t.Fatalf("SignEvent() error = %v", err)
+	}
+
+	if event.PubKey != mgmt.Config.GetSelf() {
+		t.Errorf("SignEvent() signed with %s, want relay key %s", event.PubKey, mgmt.Config.GetSelf())
+	}
+
+	if !event.VerifySignature() {
+		t.Error("SignEvent() produced an invalid signature")
+	}
+
+	// A zero created_at must be replaced with the current time.
+	if event.CreatedAt == 0 {
+		t.Error("SignEvent() should default a missing created_at to the current time")
+	}
+
+	// SignEvent must not persist the event, only return it.
+	filter := nostr.Filter{Kinds: []nostr.Kind{nostr.KindApplicationSpecificData}, Tags: nostr.TagMap{"d": []string{"zooid/test"}}}
+
+	for stored := range mgmt.Events.QueryEvents(filter, 1) {
+		if stored.ID == event.ID {
+			t.Error("SignEvent() should not store the signed event")
+		}
+	}
+}
+
+func TestManagementStore_SignEvent_RejectsOtherKinds(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if _, err := mgmt.SignEvent(nostr.KindTextNote, 0, nil, ""); err == nil || err.Error() != "kind not allowed" {
+		t.Errorf("SignEvent() error = %v, want \"kind not allowed\"", err)
+	}
+}
+
 func TestManagementStore_PubkeyIsBanned_NotBanned(t *testing.T) {
 	mgmt := createTestManagementStore()
 

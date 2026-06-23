@@ -321,21 +321,21 @@ func (m *ManagementStore) DeleteRole(id string) error {
 			return err
 		}
 
-  	address := nostr.EntityPointer{
-  		Kind:       event.Kind,
-  		PublicKey:  event.PubKey,
-  		Identifier: event.Tags.GetD(),
-  	}.AsTagReference()
+		address := nostr.EntityPointer{
+			Kind:       event.Kind,
+			PublicKey:  event.PubKey,
+			Identifier: event.Tags.GetD(),
+		}.AsTagReference()
 
-  	event := nostr.Event{
-  		Kind:      nostr.KindDeletion,
-  		CreatedAt: nostr.Now(),
-  		Tags: nostr.Tags{
-  			nostr.Tag{"e", event.ID.Hex()},
-  			nostr.Tag{"a", address},
-  			nostr.Tag{"k", strconv.Itoa(int(event.Kind))},
-  		},
-  	}
+		event := nostr.Event{
+			Kind:      nostr.KindDeletion,
+			CreatedAt: nostr.Now(),
+			Tags: nostr.Tags{
+				nostr.Tag{"e", event.ID.Hex()},
+				nostr.Tag{"a", address},
+				nostr.Tag{"k", strconv.Itoa(int(event.Kind))},
+			},
+		}
 
 		if err := m.Events.SignAndStoreEvent(&event, true); err != nil {
 			return err
@@ -433,6 +433,36 @@ func (m *ManagementStore) removeRoleFromMembers(roleID string) error {
 	membersEvent.Tags = tags
 
 	return m.Events.SignAndStoreEvent(&membersEvent, true)
+}
+
+// Signing
+
+// SignEvent signs an event template with the relay's identity key on an admin's behalf, then
+// stores and broadcasts it before returning the signed event. Only kind 30078 (application-specific
+// data) is supported for now; every other kind is rejected outright.
+func (m *ManagementStore) SignEvent(kind nostr.Kind, createdAt nostr.Timestamp, tags nostr.Tags, content string) (nostr.Event, error) {
+	if kind != nostr.KindApplicationSpecificData {
+		return nostr.Event{}, errors.New("kind not allowed")
+	}
+
+	// A missing created_at would otherwise default to the epoch, which is almost never what
+	// the caller intends, so fall back to the current time.
+	if createdAt == 0 {
+		createdAt = nostr.Now()
+	}
+
+	event := nostr.Event{
+		Kind:      kind,
+		CreatedAt: createdAt,
+		Tags:      tags,
+		Content:   content,
+	}
+
+	if err := m.Events.SignAndStoreEvent(&event, true); err != nil {
+		return nostr.Event{}, err
+	}
+
+	return event, nil
 }
 
 // Banning
@@ -609,5 +639,9 @@ func (m *ManagementStore) Enable(instance *Instance) {
 
 	instance.Relay.ManagementAPI.UnassignRole = func(ctx context.Context, pubkey nostr.PubKey, roleID string) error {
 		return m.UnassignRole(pubkey, roleID)
+	}
+
+	instance.Relay.ManagementAPI.SignEvent = func(ctx context.Context, kind nostr.Kind, createdAt nostr.Timestamp, tags nostr.Tags, content string) (nostr.Event, error) {
+		return m.SignEvent(kind, createdAt, tags, content)
 	}
 }
