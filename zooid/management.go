@@ -437,11 +437,19 @@ func (m *ManagementStore) removeRoleFromMembers(roleID string) error {
 
 // Signing
 
+// signableKinds is the allowlist of event kinds the relay is willing to sign on an admin's
+// behalf. Any kind not in this list is rejected outright.
+var signableKinds = []nostr.Kind{
+	nostr.KindApplicationSpecificData, // 30078
+	30067,
+	39067,
+}
+
 // SignEvent signs an event template with the relay's identity key on an admin's behalf, then
-// stores and broadcasts it before returning the signed event. Only kind 30078 (application-specific
-// data) is supported for now; every other kind is rejected outright.
+// stores and broadcasts it before returning the signed event. Only kinds in signableKinds are
+// supported; every other kind is rejected outright.
 func (m *ManagementStore) SignEvent(kind nostr.Kind, createdAt nostr.Timestamp, tags nostr.Tags, content string) (nostr.Event, error) {
-	if kind != nostr.KindApplicationSpecificData {
+	if !slices.Contains(signableKinds, kind) {
 		return nostr.Event{}, errors.New("kind not allowed")
 	}
 
