@@ -521,13 +521,18 @@ func TestManagementStore_SignEvent_AllowedKind(t *testing.T) {
 		t.Error("SignEvent() should default a missing created_at to the current time")
 	}
 
-	// SignEvent must not persist the event, only return it.
+	// SignEvent persists the signed event so it can be served back to clients.
 	filter := nostr.Filter{Kinds: []nostr.Kind{nostr.KindApplicationSpecificData}, Tags: nostr.TagMap{"d": []string{"zooid/test"}}}
 
+	persisted := false
 	for stored := range mgmt.Events.QueryEvents(filter, 1) {
 		if stored.ID == event.ID {
-			t.Error("SignEvent() should not store the signed event")
+			persisted = true
 		}
+	}
+
+	if !persisted {
+		t.Error("SignEvent() should store the signed event")
 	}
 }
 
