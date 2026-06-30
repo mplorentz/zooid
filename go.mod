@@ -3,7 +3,7 @@ module zooid
 go 1.25
 
 require (
-	fiatjaf.com/nostr v0.0.0-20251104112613-38a6ca92b954
+	fiatjaf.com/nostr v0.0.0-20260628140627-b8f6bf4be8df
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/aws/aws-sdk-go-v2 v1.41.7
@@ -131,4 +131,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260623001341-fa7d25a59b3d
+replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260630205052-64619424a381

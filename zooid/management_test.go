@@ -1,12 +1,24 @@
 package zooid
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
+	"fiatjaf.com/nostr/nip86"
 )
+
+// colorHue builds a nip86.Color with only the hue component set.
+func colorHue(h int) nip86.Color {
+	return nip86.Color{Hue: &h}
+}
+
+// colorHSL builds a nip86.Color with all three components set.
+func colorHSL(h int, s, l float64) nip86.Color {
+	return nip86.Color{Hue: &h, Saturation: &s, Lightness: &l}
+}
 
 func createTestManagementStore() *ManagementStore {
 	config := &Config{
@@ -177,7 +189,7 @@ func roleTagValue(event nostr.Event, key string) string {
 func TestManagementStore_CreateRole(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "ruler of the relay", 37, 1); err != nil {
+	if err := mgmt.CreateRole("king", "King", "ruler of the relay", colorHue(37), 1); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -206,8 +218,9 @@ func TestManagementStore_CreateRole(t *testing.T) {
 		t.Errorf("description tag = %q, want %q", got, "ruler of the relay")
 	}
 
-	if got := roleTagValue(event, "color"); got != "37" {
-		t.Errorf("color tag = %q, want %q", got, "37")
+	// A hue-only color drops its trailing empty saturation/lightness components.
+	if got := event.Tags.Find("color"); !slices.Equal(got, nostr.Tag{"color", "37"}) {
+		t.Errorf("color tag = %v, want %v", got, nostr.Tag{"color", "37"})
 	}
 
 	if got := roleTagValue(event, "order"); got != "1" {
@@ -219,14 +232,53 @@ func TestManagementStore_CreateRole(t *testing.T) {
 	}
 }
 
-func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
+func TestManagementStore_CreateRole_FullColor(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 0.5, 0.25), 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
-	if err := mgmt.CreateRole("king", "King", "", 0, 0); err == nil {
+	event, ok := mgmt.GetRoleDefinition("king")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the created role")
+	}
+
+	want := nostr.Tag{"color", "37", "0.5", "0.25"}
+	if got := event.Tags.Find("color"); !slices.Equal(got, want) {
+		t.Errorf("color tag = %v, want %v", got, want)
+	}
+}
+
+func TestManagementStore_CreateRole_PartialColor(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	// Lightness without saturation keeps an empty placeholder for the omitted
+	// saturation so positions stay aligned, but still drops nothing after it.
+	light := 0.25
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{Lightness: &light}, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	event, ok := mgmt.GetRoleDefinition("king")
+	if !ok {
+		t.Fatal("GetRoleDefinition() should return the created role")
+	}
+
+	want := nostr.Tag{"color", "", "", "0.25"}
+	if got := event.Tags.Find("color"); !slices.Equal(got, want) {
+		t.Errorf("color tag = %v, want %v", got, want)
+	}
+}
+
+func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err == nil {
 		t.Error("CreateRole() should error when the role already exists")
 	}
 }
@@ -234,7 +286,7 @@ func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
 func TestManagementStore_CreateRole_OmitsEmptyAndZero(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("plain", "", "", 0, 0); err != nil {
+	if err := mgmt.CreateRole("plain", "", "", nip86.Color{}, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -253,8 +305,16 @@ func TestManagementStore_CreateRole_OmitsEmptyAndZero(t *testing.T) {
 func TestManagementStore_CreateRole_InvalidColor(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", 300, 0); err == nil {
-		t.Error("CreateRole() should error on out-of-range color")
+	if err := mgmt.CreateRole("king", "King", "", colorHue(400), 0); err == nil {
+		t.Error("CreateRole() should error on out-of-range hue")
+	}
+
+	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 1.5, 0.5), 0); err == nil {
+		t.Error("CreateRole() should error on out-of-range saturation")
+	}
+
+	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 0.5, 2), 0); err == nil {
+		t.Error("CreateRole() should error on out-of-range lightness")
 	}
 
 	if _, ok := mgmt.GetRoleDefinition("king"); ok {
@@ -265,15 +325,15 @@ func TestManagementStore_CreateRole_InvalidColor(t *testing.T) {
 func TestManagementStore_EditRole(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.EditRole("king", "King", "", 0, 0); err == nil {
+	if err := mgmt.EditRole("king", "King", "", nip86.Color{}, 0); err == nil {
 		t.Error("EditRole() should error when the role does not exist")
 	}
 
-	if err := mgmt.CreateRole("king", "King", "ruler", 10, 1); err != nil {
+	if err := mgmt.CreateRole("king", "King", "ruler", colorHue(10), 1); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
-	if err := mgmt.EditRole("king", "Monarch", "the boss", 200, 2); err != nil {
+	if err := mgmt.EditRole("king", "Monarch", "the boss", colorHue(200), 2); err != nil {
 		t.Fatalf("EditRole() error = %v", err)
 	}
 
@@ -305,7 +365,7 @@ func TestManagementStore_AssignAndUnassignRole(t *testing.T) {
 
 	pubkey := nostr.Generate().Public()
 
-	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -364,7 +424,7 @@ func TestManagementStore_DeleteRole(t *testing.T) {
 
 	pubkey := nostr.Generate().Public()
 
-	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -394,7 +454,7 @@ func TestManagementStore_DeleteRole(t *testing.T) {
 func TestManagementStore_DeleteRole_BroadcastsDeletion(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
