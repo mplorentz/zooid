@@ -478,7 +478,8 @@ func (m *ManagementStore) removeRoleFromMembers(roleID string) error {
 // signableKinds is the allowlist of event kinds the relay is willing to sign on an admin's
 // behalf. Any kind not in this list is rejected outright.
 var signableKinds = []nostr.Kind{
-	nostr.KindApplicationSpecificData, // 30078
+	nostr.KindApplicationSpecificData,
+	nostr.KindDeletion,
 	30067,
 	39067,
 }

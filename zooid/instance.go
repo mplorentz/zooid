@@ -149,7 +149,6 @@ func makeInstance(config *Config, source string) (*Instance, error) {
 
 	// Update managed membership/admin lists
 
-	instance.Management.AllowPubkey(config.GetSelf())
 	instance.Management.AllowPubkey(config.GetOwner())
 
 	for _, role := range config.Roles {
@@ -192,6 +191,10 @@ func (instance *Instance) AllowRecipientEvent(event nostr.Event) bool {
 
 		if recipientTag != nil {
 			pubkey, err := nostr.PubKeyFromHex(recipientTag[1])
+
+			if err == nil && instance.Config.CanManage(pubkey) {
+				return true
+			}
 
 			if err == nil && instance.Management.IsMember(pubkey) {
 				return true
@@ -286,7 +289,7 @@ func (instance *Instance) OnRequest(ctx context.Context, filter nostr.Filter) (r
 		return true, "auth-required: authentication is required for access"
 	}
 
-	if !instance.Config.Policy.PublicRead && !instance.Management.IsMember(pubkey) {
+	if !instance.Config.Policy.PublicRead && !instance.Config.CanManage(pubkey) && !instance.Management.IsMember(pubkey) {
 		return true, "restricted: you are not a member of this relay"
 	}
 
@@ -367,7 +370,7 @@ func (instance *Instance) OnEvent(ctx context.Context, event nostr.Event) (rejec
 		return instance.Push.ValidatePushSubscription(event)
 	}
 
-	if !instance.Config.Policy.PublicWrite && !instance.Management.IsMember(pubkey) {
+	if !instance.Config.Policy.PublicWrite && !instance.Config.CanManage(pubkey) && !instance.Management.IsMember(pubkey) {
 		return true, "restricted: you are not a member of this relay"
 	}
 
