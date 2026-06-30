@@ -30,6 +30,8 @@ type Config struct {
 	} `toml:"info" json:"info"`
 
 	Policy struct {
+		PublicRead      bool `toml:"public_read" json:"public_read"`
+		PublicWrite     bool `toml:"public_write" json:"public_write"`
 		PublicJoin      bool `toml:"public_join" json:"public_join"`
 		StripSignatures bool `toml:"strip_signatures" json:"strip_signatures"`
 	} `toml:"policy" json:"policy"`

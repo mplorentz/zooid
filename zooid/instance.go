@@ -286,7 +286,7 @@ func (instance *Instance) OnRequest(ctx context.Context, filter nostr.Filter) (r
 		return true, "auth-required: authentication is required for access"
 	}
 
-	if !instance.Management.IsMember(pubkey) {
+	if !instance.Management.IsMember(pubkey) && !instance.Config.Policy.PublicRead {
 		return true, "restricted: you are not a member of this relay"
 	}
 
@@ -363,7 +363,7 @@ func (instance *Instance) OnEvent(ctx context.Context, event nostr.Event) (rejec
 		return instance.Push.ValidatePushSubscription(event)
 	}
 
-	if !instance.Management.IsMember(pubkey) {
+	if !instance.Management.IsMember(pubkey) && !instance.Config.Policy.PublicWrite {
 		return true, "restricted: you are not a member of this relay"
 	}
 
