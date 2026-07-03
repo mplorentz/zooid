@@ -240,21 +240,21 @@ func (instance *Instance) OnConnect(ctx context.Context) {
 }
 
 func (instance *Instance) PreventBroadcast(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
-  for _, pubkey := range ws.AuthedPublicKeys {
-    if instance.Config.CanManage(pubkey) {
-      return false
-    }
+	for _, pubkey := range ws.AuthedPublicKeys {
+		if instance.Config.CanManage(pubkey) {
+			return false
+		}
 
 		if instance.Groups.IsGroupEvent(event) && instance.Groups.CanRead(pubkey, event) {
 			return false
 		}
 
 		if event.Kind == PUSH_SUBSCRIPTION && event.PubKey == pubkey {
-  		return false
+			return false
 		}
-  }
+	}
 
-  return !IsReadableEvent(event)
+	return !IsReadableEvent(event)
 }
 
 func (instance *Instance) StoreEvent(ctx context.Context, event nostr.Event) error {

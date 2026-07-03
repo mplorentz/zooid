@@ -473,6 +473,95 @@ func (m *ManagementStore) removeRoleFromMembers(roleID string) error {
 	return m.Events.SignAndStoreEvent(&membersEvent, true)
 }
 
+// Claims
+//
+// A claim is a NIP-43 invite code. Zooid represents each claim as a RELAY_INVITE event carrying
+// a "claim" tag. These events are never broadcast or served to clients (see IsReadableEvent and
+// QueryStored); they exist only so the code can be redeemed via a join request in
+// ValidateJoinRequest. Auto-generated per-pubkey invites (Instance.GenerateInviteEvent) use the
+// same shape, so claim management operates uniformly over both.
+
+// GetClaims returns every claim the relay currently knows about, one per stored RELAY_INVITE
+// event.
+func (m *ManagementStore) GetClaims() []string {
+	claims := make([]string, 0)
+
+	filter := nostr.Filter{
+		Kinds: []nostr.Kind{RELAY_INVITE},
+	}
+
+	for event := range m.Events.QueryEvents(filter, 0) {
+		if tag := event.Tags.Find("claim"); tag != nil {
+			claims = append(claims, tag[1])
+		}
+	}
+
+	return claims
+}
+
+// ClaimExists reports whether any stored RELAY_INVITE event carries the given claim.
+func (m *ManagementStore) ClaimExists(claim string) bool {
+	filter := nostr.Filter{
+		Kinds: []nostr.Kind{RELAY_INVITE},
+	}
+
+	for event := range m.Events.QueryEvents(filter, 0) {
+		if event.Tags.FindWithValue("claim", claim) != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CreateClaim registers an invite code by storing a RELAY_INVITE event carrying the claim. The
+// event is not broadcast, and it's idempotent: creating a claim that already exists is a no-op.
+func (m *ManagementStore) CreateClaim(claim string) error {
+	if claim == "" {
+		return errors.New("claim is required")
+	}
+
+	if m.ClaimExists(claim) {
+		return nil
+	}
+
+	event := nostr.Event{
+		Kind:      RELAY_INVITE,
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			[]string{"claim", claim},
+		},
+	}
+
+	return m.Events.SignAndStoreEvent(&event, false)
+}
+
+// DeleteClaim revokes an invite code by deleting every RELAY_INVITE event whose claim tag
+// matches, covering both admin-created claims and any auto-generated invites sharing the code.
+func (m *ManagementStore) DeleteClaim(claim string) error {
+	// Collect matching ids before deleting so we're not mutating the events table while a query
+	// cursor over it is still open.
+	ids := make([]nostr.ID, 0)
+
+	filter := nostr.Filter{
+		Kinds: []nostr.Kind{RELAY_INVITE},
+	}
+
+	for event := range m.Events.QueryEvents(filter, 0) {
+		if event.Tags.FindWithValue("claim", claim) != nil {
+			ids = append(ids, event.ID)
+		}
+	}
+
+	for _, id := range ids {
+		if err := m.Events.DeleteEvent(id); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Signing
 
 // signableKinds is the allowlist of event kinds the relay is willing to sign on an admin's
@@ -592,14 +681,8 @@ func (m *ManagementStore) ValidateJoinRequest(event nostr.Event) (reject bool, e
 		return true, "invalid: no claim tag"
 	}
 
-	filter := nostr.Filter{
-		Kinds: []nostr.Kind{RELAY_INVITE},
-	}
-
-	for event := range m.Events.QueryEvents(filter, 0) {
-		if event.Tags.FindWithValue("claim", claimTag[1]) != nil {
-			return false, ""
-		}
+	if m.ClaimExists(claimTag[1]) {
+		return false, ""
 	}
 
 	return true, "invalid: failed to validate invite code"
@@ -686,6 +769,18 @@ func (m *ManagementStore) Enable(instance *Instance) {
 
 	instance.Relay.ManagementAPI.UnassignRole = func(ctx context.Context, pubkey nostr.PubKey, roleID string) error {
 		return m.UnassignRole(pubkey, roleID)
+	}
+
+	instance.Relay.ManagementAPI.ListClaims = func(ctx context.Context) ([]string, error) {
+		return m.GetClaims(), nil
+	}
+
+	instance.Relay.ManagementAPI.CreateClaim = func(ctx context.Context, claim string) error {
+		return m.CreateClaim(claim)
+	}
+
+	instance.Relay.ManagementAPI.DeleteClaim = func(ctx context.Context, claim string) error {
+		return m.DeleteClaim(claim)
 	}
 
 	instance.Relay.ManagementAPI.SignEvent = func(ctx context.Context, kind nostr.Kind, createdAt nostr.Timestamp, tags nostr.Tags, content string) (nostr.Event, error) {

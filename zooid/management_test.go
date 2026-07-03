@@ -563,3 +563,182 @@ func TestManagementStore_EventIsBanned_NotBanned(t *testing.T) {
 		t.Error("EventIsBanned() should return false for non-banned event")
 	}
 }
+
+func TestManagementStore_CreateClaim(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateClaim("welcome"); err != nil {
+		t.Fatalf("CreateClaim() error = %v", err)
+	}
+
+	if !mgmt.ClaimExists("welcome") {
+		t.Error("ClaimExists() should return true after CreateClaim()")
+	}
+
+	if claims := mgmt.GetClaims(); !slices.Contains(claims, "welcome") {
+		t.Errorf("GetClaims() = %v, want to contain %q", claims, "welcome")
+	}
+
+	// The claim is stored as a RELAY_INVITE event so it can be redeemed later.
+	filter := nostr.Filter{Kinds: []nostr.Kind{RELAY_INVITE}}
+
+	var stored *nostr.Event
+	for event := range mgmt.Events.QueryEvents(filter, 0) {
+		if event.Tags.FindWithValue("claim", "welcome") != nil {
+			e := event
+			stored = &e
+		}
+	}
+
+	if stored == nil {
+		t.Fatal("CreateClaim() should store a RELAY_INVITE event carrying the claim")
+	}
+
+	if stored.PubKey != mgmt.Config.GetSelf() {
+		t.Errorf("CreateClaim() invite signed with %s, want relay key %s", stored.PubKey, mgmt.Config.GetSelf())
+	}
+}
+
+func TestManagementStore_CreateClaim_Idempotent(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateClaim("dup"); err != nil {
+		t.Fatalf("CreateClaim() error = %v", err)
+	}
+
+	if err := mgmt.CreateClaim("dup"); err != nil {
+		t.Fatalf("CreateClaim() second call error = %v", err)
+	}
+
+	count := 0
+	for _, claim := range mgmt.GetClaims() {
+		if claim == "dup" {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Errorf("CreateClaim() created %d claims for %q, want 1", count, "dup")
+	}
+}
+
+func TestManagementStore_CreateClaim_Empty(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateClaim(""); err == nil {
+		t.Error("CreateClaim(\"\") should return an error")
+	}
+}
+
+func TestManagementStore_GetClaims_ReturnsAll(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	for _, claim := range []string{"alpha", "beta", "gamma"} {
+		if err := mgmt.CreateClaim(claim); err != nil {
+			t.Fatalf("CreateClaim(%q) error = %v", claim, err)
+		}
+	}
+
+	claims := mgmt.GetClaims()
+
+	for _, want := range []string{"alpha", "beta", "gamma"} {
+		if !slices.Contains(claims, want) {
+			t.Errorf("GetClaims() = %v, want to contain %q", claims, want)
+		}
+	}
+}
+
+func TestManagementStore_DeleteClaim(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateClaim("keep"); err != nil {
+		t.Fatalf("CreateClaim() error = %v", err)
+	}
+
+	if err := mgmt.CreateClaim("drop"); err != nil {
+		t.Fatalf("CreateClaim() error = %v", err)
+	}
+
+	if err := mgmt.DeleteClaim("drop"); err != nil {
+		t.Fatalf("DeleteClaim() error = %v", err)
+	}
+
+	if mgmt.ClaimExists("drop") {
+		t.Error("ClaimExists() should return false after DeleteClaim()")
+	}
+
+	if !mgmt.ClaimExists("keep") {
+		t.Error("DeleteClaim() should not remove unrelated claims")
+	}
+}
+
+func TestManagementStore_DeleteClaim_RemovesAllMatching(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	// Two separate RELAY_INVITE events can share a claim (e.g. an admin-created claim plus an
+	// auto-generated per-pubkey invite). DeleteClaim must remove every match.
+	for i := 0; i < 2; i++ {
+		event := nostr.Event{
+			Kind:      RELAY_INVITE,
+			CreatedAt: nostr.Timestamp(1000 + i),
+			Tags: nostr.Tags{
+				[]string{"claim", "shared"},
+				[]string{"p", nostr.Generate().Public().Hex()},
+			},
+		}
+
+		if err := mgmt.Events.SignAndStoreEvent(&event, false); err != nil {
+			t.Fatalf("SignAndStoreEvent() error = %v", err)
+		}
+	}
+
+	if err := mgmt.DeleteClaim("shared"); err != nil {
+		t.Fatalf("DeleteClaim() error = %v", err)
+	}
+
+	remaining := 0
+	for event := range mgmt.Events.QueryEvents(nostr.Filter{Kinds: []nostr.Kind{RELAY_INVITE}}, 0) {
+		if event.Tags.FindWithValue("claim", "shared") != nil {
+			remaining++
+		}
+	}
+
+	if remaining != 0 {
+		t.Errorf("DeleteClaim() left %d invite events, want 0", remaining)
+	}
+}
+
+func TestManagementStore_CreateClaim_ValidatesJoinRequest(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	if err := mgmt.CreateClaim("secret-code"); err != nil {
+		t.Fatalf("CreateClaim() error = %v", err)
+	}
+
+	join := nostr.Event{
+		PubKey:    nostr.Generate().Public(),
+		Kind:      RELAY_JOIN,
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			[]string{"claim", "secret-code"},
+		},
+	}
+
+	if reject, msg := mgmt.ValidateJoinRequest(join); reject {
+		t.Errorf("ValidateJoinRequest() rejected a valid claim: %s", msg)
+	}
+
+	// A join carrying an unknown claim must still be rejected.
+	badJoin := nostr.Event{
+		PubKey:    nostr.Generate().Public(),
+		Kind:      RELAY_JOIN,
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			[]string{"claim", "wrong-code"},
+		},
+	}
+
+	if reject, _ := mgmt.ValidateJoinRequest(badJoin); !reject {
+		t.Error("ValidateJoinRequest() should reject an unknown claim")
+	}
+}
