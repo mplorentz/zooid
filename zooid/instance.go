@@ -240,31 +240,21 @@ func (instance *Instance) OnConnect(ctx context.Context) {
 }
 
 func (instance *Instance) PreventBroadcast(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
-	if !IsReadableEvent(event) {
-		return true
-	}
+  for _, pubkey := range ws.AuthedPublicKeys {
+    if instance.Config.CanManage(pubkey) {
+      return false
+    }
 
-	if instance.Groups.IsGroupEvent(event) {
-		for _, pubkey := range ws.AuthedPublicKeys {
-			if instance.Groups.CanRead(pubkey, event) {
-				return false
-			}
+		if instance.Groups.IsGroupEvent(event) && instance.Groups.CanRead(pubkey, event) {
+			return false
 		}
 
-		return true
-	}
-
-	if event.Kind == PUSH_SUBSCRIPTION {
-		for _, pubkey := range ws.AuthedPublicKeys {
-			if event.PubKey == pubkey {
-				return false
-			}
+		if event.Kind == PUSH_SUBSCRIPTION && event.PubKey == pubkey {
+  		return false
 		}
+  }
 
-		return true
-	}
-
-	return false
+  return !IsReadableEvent(event)
 }
 
 func (instance *Instance) StoreEvent(ctx context.Context, event nostr.Event) error {
@@ -327,16 +317,18 @@ func (instance *Instance) QueryStored(ctx context.Context, filter nostr.Filter) 
 			}
 
 			for event := range instance.Events.QueryEvents(filter, 1000) {
-				if !IsReadableEvent(event) {
-					continue
-				}
+				if !instance.Config.CanManage(pubkey) {
+					if !IsReadableEvent(event) {
+						continue
+					}
 
-				if event.Kind == PUSH_SUBSCRIPTION && event.PubKey != pubkey {
-					continue
-				}
+					if event.Kind == PUSH_SUBSCRIPTION && event.PubKey != pubkey {
+						continue
+					}
 
-				if instance.Groups.IsGroupEvent(event) && !instance.Groups.CanRead(pubkey, event) {
-					continue
+					if instance.Groups.IsGroupEvent(event) && !instance.Groups.CanRead(pubkey, event) {
+						continue
+					}
 				}
 
 				if !yield(instance.StripSignature(pubkey, event)) {
@@ -438,7 +430,7 @@ func (instance *Instance) OnEventSaved(ctx context.Context, event nostr.Event) {
 		instance.Groups.DeleteGroup(h)
 	}
 
-	if instance.Config.Push.Enabled && !IsWriteOnlyEvent(event) {
+	if instance.Config.Push.Enabled {
 		instance.Push.HandleEvent(event)
 	}
 }
@@ -452,7 +444,7 @@ func (instance *Instance) OnEphemeralEvent(ctx context.Context, event nostr.Even
 		instance.Management.RemoveMember(event.PubKey)
 	}
 
-	if instance.Config.Push.Enabled && !IsWriteOnlyEvent(event) {
+	if instance.Config.Push.Enabled {
 		instance.Push.HandleEvent(event)
 	}
 }
