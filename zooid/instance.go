@@ -426,6 +426,10 @@ func (instance *Instance) OnEventSaved(ctx context.Context, event nostr.Event) {
 		instance.Groups.UpdateAdminsList(h)
 	}
 
+	if event.Kind == GROUP_PUT_PINS {
+		instance.Groups.UpdatePins(event)
+	}
+
 	if event.Kind == nostr.KindSimpleGroupDeleteGroup {
 		instance.Groups.DeleteGroup(h)
 	}

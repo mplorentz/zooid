@@ -15,6 +15,7 @@ import (
 const (
 	RELAY_ADD_MEMBER    = 8000
 	RELAY_REMOVE_MEMBER = 8001
+	GROUP_PUT_PINS      = 9010
 	ROOM_PRESENCE       = 10312
 	RELAY_MEMBERS       = 13534
 	RELAY_JOIN          = 28934
@@ -22,6 +23,7 @@ const (
 	RELAY_LEAVE         = 28936
 	PUSH_SUBSCRIPTION   = 30390
 	RELAY_ROLE          = 33534
+	GROUP_PINS          = 39005
 	BANNED_PUBKEYS      = "zooid/banned_pubkeys"
 	BANNED_EVENTS       = "zooid/banned_events"
 )

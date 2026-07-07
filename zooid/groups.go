@@ -6,12 +6,19 @@ import (
 	"slices"
 )
 
+// nip29.MetadataEventKinds and nip29.ModerationEventKinds, extended with our
+// own non-standard kinds that haven't landed upstream yet.
+var (
+	MetadataEventKinds   = append([]nostr.Kind{GROUP_PINS}, nip29.MetadataEventKinds...)
+	ModerationEventKinds = append([]nostr.Kind{GROUP_PUT_PINS}, nip29.ModerationEventKinds...)
+)
+
 // Utils
 
 func GetGroupIDFromEvent(event nostr.Event) string {
 	var tagName string
 
-	if slices.Contains(nip29.MetadataEventKinds, event.Kind) || event.Kind == nostr.KindSimpleGroupLiveKitParticipants {
+	if slices.Contains(MetadataEventKinds, event.Kind) {
 		tagName = "d"
 	} else {
 		tagName = "h"
@@ -71,12 +78,37 @@ func (g *GroupStore) UpdateMetadata(event nostr.Event) error {
 	return g.Events.SignAndStoreEvent(&metadataEvent, true)
 }
 
+// Pins
+
+func (g *GroupStore) UpdatePins(event nostr.Event) error {
+	tags := nostr.Tags{
+		nostr.Tag{"-"},
+		nostr.Tag{"d", GetGroupIDFromEvent(event)},
+	}
+
+	for tag := range event.Tags.FindAll("e") {
+		tags = append(tags, tag)
+	}
+
+	for tag := range event.Tags.FindAll("a") {
+		tags = append(tags, tag)
+	}
+
+	pinsEvent := nostr.Event{
+		Kind:      GROUP_PINS,
+		CreatedAt: event.CreatedAt,
+		Tags:      tags,
+	}
+
+	return g.Events.SignAndStoreEvent(&pinsEvent, true)
+}
+
 // Deletion
 
 func (g *GroupStore) DeleteGroup(h string) {
 	filters := []nostr.Filter{
 		{
-			Kinds: nip29.MetadataEventKinds,
+			Kinds: MetadataEventKinds,
 			Tags: nostr.TagMap{
 				"d": []string{h},
 			},
@@ -231,11 +263,11 @@ func (g *GroupStore) IsGroupEvent(event nostr.Event) bool {
 		return false
 	}
 
-	if slices.Contains(nip29.MetadataEventKinds, event.Kind) {
+	if slices.Contains(MetadataEventKinds, event.Kind) {
 		return true
 	}
 
-	if slices.Contains(nip29.ModerationEventKinds, event.Kind) {
+	if slices.Contains(ModerationEventKinds, event.Kind) {
 		return true
 	}
 
@@ -287,7 +319,7 @@ func (g *GroupStore) CheckWrite(event nostr.Event) string {
 		return "invalid: groups are not enabled"
 	}
 
-	if slices.Contains(nip29.MetadataEventKinds, event.Kind) {
+	if slices.Contains(MetadataEventKinds, event.Kind) {
 		return "invalid: group metadata cannot be set directly"
 	}
 
@@ -302,7 +334,7 @@ func (g *GroupStore) CheckWrite(event nostr.Event) string {
 		return "invalid: group not found"
 	}
 
-	if slices.Contains(nip29.ModerationEventKinds, event.Kind) && !g.Config.CanManage(event.PubKey) {
+	if slices.Contains(ModerationEventKinds, event.Kind) && !g.Config.CanManage(event.PubKey) {
 		return "restricted: you are not authorized to manage groups"
 	}
 
