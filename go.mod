@@ -131,4 +131,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260708171922-7cbf5a91fc86
+replace fiatjaf.com/nostr => gitea.coracle.social/Coracle/nostrlib v0.0.0-20260708210939-2a42fc4a163f
