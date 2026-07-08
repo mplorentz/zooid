@@ -1,9 +1,11 @@
 package zooid
 
 import (
+	"sync"
 	"testing"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
 )
 
 func createTestEventStore() *EventStore {
@@ -565,5 +567,147 @@ func TestEventStore_GetOrCreateApplicationSpecificData(t *testing.T) {
 
 	if event1.ID == event3.ID {
 		t.Error("GetOrCreateApplicationSpecificData() should create different event for different d tag")
+	}
+}
+
+// Regression test for a bug where QueryEvents' maxLimit only clamped a
+// filter that already specified a (larger) Limit - a filter with no Limit at
+// all (Limit == 0, the normal case) went through unbounded.
+func TestEventStore_QueryEvents_MaxLimitCapsFilterWithNoLimit(t *testing.T) {
+	store := createTestEventStore()
+	store.Init()
+
+	for i := 0; i < 5; i++ {
+		event := createTestEvent(nostr.KindTextNote, "event content")
+		store.SaveEvent(event)
+	}
+
+	filter := nostr.Filter{}
+	events := make([]nostr.Event, 0)
+	for evt := range store.QueryEvents(filter, 3) {
+		events = append(events, evt)
+	}
+
+	if len(events) != 3 {
+		t.Errorf("QueryEvents() with maxLimit=3 and no filter.Limit returned %d events, want 3", len(events))
+	}
+}
+
+// Regression test for CountEvents wrapping buildSelectQuery's own LIMIT
+// clause inside COUNT(*), which silently truncated the count whenever the
+// caller's filter set a Limit. Limit is a delivery hint for QueryEvents, not
+// a cap on how many matching events exist.
+func TestEventStore_CountEvents_IgnoresFilterLimit(t *testing.T) {
+	store := createTestEventStore()
+	store.Init()
+
+	for i := 0; i < 5; i++ {
+		event := createTestEvent(nostr.KindTextNote, "event content")
+		store.SaveEvent(event)
+	}
+
+	count, err := store.CountEvents(nostr.Filter{Limit: 2})
+	if err != nil {
+		t.Fatalf("CountEvents() error = %v", err)
+	}
+
+	if count != 5 {
+		t.Errorf("CountEvents() with filter.Limit=2 = %d, want 5", count)
+	}
+}
+
+// Regression test for the fts5 schema never actually being created: the
+// template string was executed as literal SQL instead of being rendered via
+// Schema.Render first, so GetDb().Exec always failed and FTSAvailable was
+// permanently false.
+func TestEventStore_Init_FTSAvailable(t *testing.T) {
+	store := createTestEventStore()
+	if err := store.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	if !store.FTSAvailable {
+		t.Error("FTSAvailable = false, want true (the fts5 schema should render and create successfully)")
+	}
+}
+
+func TestEventStore_QueryEvents_SearchUsesFTS(t *testing.T) {
+	store := createTestEventStore()
+	if err := store.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if !store.FTSAvailable {
+		t.Skip("fts5 not available in this sqlite build")
+	}
+
+	event1 := createTestEvent(nostr.KindTextNote, "this contains bitcoin")
+	event2 := createTestEvent(nostr.KindTextNote, "this contains nostr")
+	store.SaveEvent(event1)
+	store.SaveEvent(event2)
+
+	found := make([]nostr.Event, 0)
+	for evt := range store.QueryEvents(nostr.Filter{Search: "bitcoin"}, 0) {
+		found = append(found, evt)
+	}
+
+	if len(found) != 1 || found[0].ID != event1.ID {
+		t.Errorf("QueryEvents() FTS search = %v, want exactly [%s]", found, event1.ID.Hex())
+	}
+
+	// A search term containing FTS5 query-syntax characters (quotes, hyphens,
+	// colons) must not break the MATCH expression - it should be treated as a
+	// literal phrase, not a query.
+	event3 := createTestEvent(nostr.KindTextNote, `weird: "quoted" - term`)
+	store.SaveEvent(event3)
+
+	found = found[:0]
+	for evt := range store.QueryEvents(nostr.Filter{Search: `weird: "quoted" - term`}, 0) {
+		found = append(found, evt)
+	}
+
+	if len(found) != 1 || found[0].ID != event3.ID {
+		t.Errorf("QueryEvents() FTS search with special characters = %v, want exactly [%s]", found, event3.ID.Hex())
+	}
+}
+
+// Regression test for SaveEvent's old check-then-insert duplicate check,
+// which raced under concurrent saves of the same event: the loser could hit
+// the primary key constraint directly and return a generic wrapped error
+// instead of eventstore.ErrDupEvent.
+func TestEventStore_SaveEvent_ConcurrentDuplicate(t *testing.T) {
+	store := createTestEventStore()
+	store.Init()
+
+	event := createTestEvent(nostr.KindTextNote, "race content")
+
+	const attempts = 8
+	errs := make([]error, attempts)
+	var wg sync.WaitGroup
+	wg.Add(attempts)
+	for i := range errs {
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = store.SaveEvent(event)
+		}(i)
+	}
+	wg.Wait()
+
+	successes, dups := 0, 0
+	for _, err := range errs {
+		switch err {
+		case nil:
+			successes++
+		case eventstore.ErrDupEvent:
+			dups++
+		default:
+			t.Errorf("SaveEvent() concurrent error = %v, want nil or eventstore.ErrDupEvent", err)
+		}
+	}
+
+	if successes != 1 {
+		t.Errorf("SaveEvent() concurrent successes = %d, want exactly 1", successes)
+	}
+	if dups != attempts-1 {
+		t.Errorf("SaveEvent() concurrent ErrDupEvent count = %d, want %d", dups, attempts-1)
 	}
 }

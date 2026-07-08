@@ -147,6 +147,36 @@ func TestInstance_GenerateInviteEvent(t *testing.T) {
 	}
 }
 
+// Regression test for the existence-check filter using tag key "#p" instead
+// of "p" - every other TagMap use in this codebase uses the bare letter, so
+// "#p" (length 2) was silently dropped by the tag-filter's single-letter-key
+// check, making the "does an invite already exist" query effectively
+// unfiltered by pubkey. It would return whichever invite happened to be most
+// recent across ALL pubkeys, not this pubkey's own.
+func TestInstance_GenerateInviteEvent_ReturnsOwnInvite(t *testing.T) {
+	instance := createTestInstance()
+
+	pubkeyA := nostr.Generate().Public()
+	pubkeyB := nostr.Generate().Public()
+
+	inviteA := instance.GenerateInviteEvent(pubkeyA)
+
+	// B is invited after A; a filter that isn't actually scoped by pubkey
+	// would return B's (more recent) invite when asked for A's.
+	instance.GenerateInviteEvent(pubkeyB)
+
+	gotA := instance.GenerateInviteEvent(pubkeyA)
+
+	pTag := gotA.Tags.Find("p")
+	if pTag == nil || pTag[1] != pubkeyA.Hex() {
+		t.Errorf("GenerateInviteEvent(pubkeyA) p tag = %v, want %s", pTag, pubkeyA.Hex())
+	}
+
+	if gotA.ID != inviteA.ID {
+		t.Errorf("GenerateInviteEvent(pubkeyA) = %s, want the existing invite %s created for pubkeyA (not a different pubkey's)", gotA.ID.Hex(), inviteA.ID.Hex())
+	}
+}
+
 func TestInstance_IsInternalEvent(t *testing.T) {
 	tests := []struct {
 		name  string

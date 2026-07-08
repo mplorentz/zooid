@@ -7,18 +7,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
-	"fiatjaf.com/nostr/nip86"
 )
-
-// colorHue builds a nip86.Color with only the hue component set.
-func colorHue(h int) nip86.Color {
-	return nip86.Color{Hue: &h}
-}
-
-// colorHSL builds a nip86.Color with all three components set.
-func colorHSL(h int, s, l float64) nip86.Color {
-	return nip86.Color{Hue: &h, Saturation: &s, Lightness: &l}
-}
 
 func createTestManagementStore() *ManagementStore {
 	config := &Config{
@@ -189,7 +178,7 @@ func roleTagValue(event nostr.Event, key string) string {
 func TestManagementStore_CreateRole(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "ruler of the relay", colorHue(37), 1); err != nil {
+	if err := mgmt.CreateRole("king", "King", "ruler of the relay", 37, 1); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -218,7 +207,6 @@ func TestManagementStore_CreateRole(t *testing.T) {
 		t.Errorf("description tag = %q, want %q", got, "ruler of the relay")
 	}
 
-	// A hue-only color drops its trailing empty saturation/lightness components.
 	if got := event.Tags.Find("color"); !slices.Equal(got, nostr.Tag{"color", "37"}) {
 		t.Errorf("color tag = %v, want %v", got, nostr.Tag{"color", "37"})
 	}
@@ -232,53 +220,14 @@ func TestManagementStore_CreateRole(t *testing.T) {
 	}
 }
 
-func TestManagementStore_CreateRole_FullColor(t *testing.T) {
-	mgmt := createTestManagementStore()
-
-	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 0.5, 0.25), 0); err != nil {
-		t.Fatalf("CreateRole() error = %v", err)
-	}
-
-	event, ok := mgmt.GetRoleDefinition("king")
-	if !ok {
-		t.Fatal("GetRoleDefinition() should return the created role")
-	}
-
-	want := nostr.Tag{"color", "37", "0.5", "0.25"}
-	if got := event.Tags.Find("color"); !slices.Equal(got, want) {
-		t.Errorf("color tag = %v, want %v", got, want)
-	}
-}
-
-func TestManagementStore_CreateRole_PartialColor(t *testing.T) {
-	mgmt := createTestManagementStore()
-
-	// Lightness without saturation keeps an empty placeholder for the omitted
-	// saturation so positions stay aligned, but still drops nothing after it.
-	light := 0.25
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{Lightness: &light}, 0); err != nil {
-		t.Fatalf("CreateRole() error = %v", err)
-	}
-
-	event, ok := mgmt.GetRoleDefinition("king")
-	if !ok {
-		t.Fatal("GetRoleDefinition() should return the created role")
-	}
-
-	want := nostr.Tag{"color", "", "", "0.25"}
-	if got := event.Tags.Find("color"); !slices.Equal(got, want) {
-		t.Errorf("color tag = %v, want %v", got, want)
-	}
-}
-
 func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err == nil {
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err == nil {
 		t.Error("CreateRole() should error when the role already exists")
 	}
 }
@@ -286,7 +235,7 @@ func TestManagementStore_CreateRole_Duplicate(t *testing.T) {
 func TestManagementStore_CreateRole_OmitsEmptyAndZero(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("plain", "", "", nip86.Color{}, 0); err != nil {
+	if err := mgmt.CreateRole("plain", "", "", 0, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -305,16 +254,12 @@ func TestManagementStore_CreateRole_OmitsEmptyAndZero(t *testing.T) {
 func TestManagementStore_CreateRole_InvalidColor(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", colorHue(400), 0); err == nil {
+	if err := mgmt.CreateRole("king", "King", "", 400, 0); err == nil {
 		t.Error("CreateRole() should error on out-of-range hue")
 	}
 
-	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 1.5, 0.5), 0); err == nil {
-		t.Error("CreateRole() should error on out-of-range saturation")
-	}
-
-	if err := mgmt.CreateRole("king", "King", "", colorHSL(37, 0.5, 2), 0); err == nil {
-		t.Error("CreateRole() should error on out-of-range lightness")
+	if err := mgmt.CreateRole("king", "King", "", -1, 0); err == nil {
+		t.Error("CreateRole() should error on out-of-range hue")
 	}
 
 	if _, ok := mgmt.GetRoleDefinition("king"); ok {
@@ -325,15 +270,15 @@ func TestManagementStore_CreateRole_InvalidColor(t *testing.T) {
 func TestManagementStore_EditRole(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.EditRole("king", "King", "", nip86.Color{}, 0); err == nil {
+	if err := mgmt.EditRole("king", "King", "", 0, 0); err == nil {
 		t.Error("EditRole() should error when the role does not exist")
 	}
 
-	if err := mgmt.CreateRole("king", "King", "ruler", colorHue(10), 1); err != nil {
+	if err := mgmt.CreateRole("king", "King", "ruler", 10, 1); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
-	if err := mgmt.EditRole("king", "Monarch", "the boss", colorHue(200), 2); err != nil {
+	if err := mgmt.EditRole("king", "Monarch", "the boss", 200, 2); err != nil {
 		t.Fatalf("EditRole() error = %v", err)
 	}
 
@@ -365,7 +310,7 @@ func TestManagementStore_AssignAndUnassignRole(t *testing.T) {
 
 	pubkey := nostr.Generate().Public()
 
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -424,7 +369,7 @@ func TestManagementStore_DeleteRole(t *testing.T) {
 
 	pubkey := nostr.Generate().Public()
 
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -454,7 +399,7 @@ func TestManagementStore_DeleteRole(t *testing.T) {
 func TestManagementStore_DeleteRole_BroadcastsDeletion(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	if err := mgmt.CreateRole("king", "King", "", nip86.Color{}, 0); err != nil {
+	if err := mgmt.CreateRole("king", "King", "", 0, 0); err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
 	}
 
@@ -740,5 +685,47 @@ func TestManagementStore_CreateClaim_ValidatesJoinRequest(t *testing.T) {
 
 	if reject, _ := mgmt.ValidateJoinRequest(badJoin); !reject {
 		t.Error("ValidateJoinRequest() should reject an unknown claim")
+	}
+}
+
+// Regression test for a bug in the vendored khatru NIP-86 dispatcher: its
+// "listbannedevents" case nil-checks ManagementAPI.ListBannedEvents but then
+// actually calls ManagementAPI.ListEventsNeedingModeration, so leaving the
+// latter unset turns every "listbannedevents" call into a nil-function-value
+// panic. Enable works around this by wiring the same handler to both fields.
+// The vendored khatru NIP-86 dispatcher used to have a copy/paste bug where
+// its "listbannedevents" case nil-checked ManagementAPI.ListBannedEvents but
+// then actually called ManagementAPI.ListEventsNeedingModeration, panicking
+// on a nil function value for any relay (like this one) that only wires up
+// ListBannedEvents. That's fixed directly in the pinned nostrlib dependency
+// now, so this just confirms Enable wires ListBannedEvents correctly -
+// nothing in zooid needs to work around the dispatcher anymore.
+func TestManagementStore_Enable_WiresListBannedEvents(t *testing.T) {
+	mgmt := createTestManagementStore()
+	instance := &Instance{
+		Relay:      khatru.NewRelay(),
+		Config:     mgmt.Config,
+		Events:     mgmt.Events,
+		Management: mgmt,
+	}
+
+	mgmt.Enable(instance)
+
+	if instance.Relay.ManagementAPI.ListBannedEvents == nil {
+		t.Fatal("Enable() should set ManagementAPI.ListBannedEvents")
+	}
+
+	eventID := nostr.MustIDFromHex("1234567890123456789012345678901234567890123456789012345678901234")
+	if err := mgmt.BanEvent(eventID, "spam"); err != nil {
+		t.Fatalf("BanEvent() error = %v", err)
+	}
+
+	items, err := instance.Relay.ManagementAPI.ListBannedEvents(t.Context())
+	if err != nil {
+		t.Fatalf("ListBannedEvents() error = %v", err)
+	}
+
+	if len(items) != 1 {
+		t.Errorf("ListBannedEvents() returned %d items, want 1", len(items))
 	}
 }

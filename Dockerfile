@@ -18,7 +18,7 @@ COPY cmd cmd
 RUN set -eux; \
     if [ "$TARGETARCH" = "arm64" ]; then export CC=aarch64-linux-gnu-gcc; fi; \
     CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o bin/zooid cmd/relay/main.go
+    go build -tags sqlite_fts5 -o bin/zooid cmd/relay/main.go
 
 FROM gcr.io/distroless/base-debian12 AS run
 

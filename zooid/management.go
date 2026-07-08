@@ -249,51 +249,13 @@ func (m *ManagementStore) GetRoleDefinition(id string) (nostr.Event, bool) {
 	return nostr.Event{}, false
 }
 
-// buildColorTag renders a nip86.Color into a ["color", hue, saturation, lightness]
-// tag. Unset components become empty strings so clients can supply their own
-// defaults for a coherent palette, and trailing empty components are dropped (so a
-// hue-only color becomes ["color", "37"]). A fully-unset color produces no tag.
-func buildColorTag(color nip86.Color) nostr.Tag {
-	values := []string{"", "", ""}
-
-	if color.Hue != nil {
-		values[0] = strconv.Itoa(*color.Hue)
-	}
-
-	if color.Saturation != nil {
-		values[1] = strconv.FormatFloat(*color.Saturation, 'f', -1, 64)
-	}
-
-	if color.Lightness != nil {
-		values[2] = strconv.FormatFloat(*color.Lightness, 'f', -1, 64)
-	}
-
-	for len(values) > 0 && values[len(values)-1] == "" {
-		values = values[:len(values)-1]
-	}
-
-	if len(values) == 0 {
-		return nil
-	}
-
-	return append(nostr.Tag{"color"}, values...)
-}
-
-func (m *ManagementStore) buildRoleEvent(id, label, description string, color nip86.Color, order int) (nostr.Event, error) {
+func (m *ManagementStore) buildRoleEvent(id, label, description string, hue, order int) (nostr.Event, error) {
 	if id == "" {
 		return nostr.Event{}, errors.New("role id is required")
 	}
 
-	if color.Hue != nil && (*color.Hue < 0 || *color.Hue > 360) {
+	if hue < 0 || hue > 360 {
 		return nostr.Event{}, errors.New("color hue must be between 0 and 360")
-	}
-
-	if color.Saturation != nil && (*color.Saturation < 0 || *color.Saturation > 1) {
-		return nostr.Event{}, errors.New("color saturation must be between 0 and 1")
-	}
-
-	if color.Lightness != nil && (*color.Lightness < 0 || *color.Lightness > 1) {
-		return nostr.Event{}, errors.New("color lightness must be between 0 and 1")
 	}
 
 	tags := nostr.Tags{
@@ -309,13 +271,13 @@ func (m *ManagementStore) buildRoleEvent(id, label, description string, color ni
 		tags = append(tags, nostr.Tag{"description", description})
 	}
 
-	if colorTag := buildColorTag(color); colorTag != nil {
-		tags = append(tags, colorTag)
+	// hue and order are optional integers. The nip86 layer can't distinguish an
+	// omitted value from a zero, so we only persist them when explicitly
+	// non-zero, letting clients fall back to their own defaults otherwise.
+	if hue != 0 {
+		tags = append(tags, nostr.Tag{"color", strconv.Itoa(hue)})
 	}
 
-	// order is an optional integer. The nip86 layer can't distinguish an omitted
-	// value from a zero, so we only persist it when it's explicitly non-zero, letting
-	// clients fall back to their own defaults otherwise.
 	if order != 0 {
 		tags = append(tags, nostr.Tag{"order", strconv.Itoa(order)})
 	}
@@ -327,12 +289,12 @@ func (m *ManagementStore) buildRoleEvent(id, label, description string, color ni
 	}, nil
 }
 
-func (m *ManagementStore) CreateRole(id, label, description string, color nip86.Color, order int) error {
+func (m *ManagementStore) CreateRole(id, label, description string, hue, order int) error {
 	if _, exists := m.GetRoleDefinition(id); exists {
 		return fmt.Errorf("role %q already exists", id)
 	}
 
-	event, err := m.buildRoleEvent(id, label, description, color, order)
+	event, err := m.buildRoleEvent(id, label, description, hue, order)
 	if err != nil {
 		return err
 	}
@@ -340,12 +302,12 @@ func (m *ManagementStore) CreateRole(id, label, description string, color nip86.
 	return m.Events.SignAndStoreEvent(&event, true)
 }
 
-func (m *ManagementStore) EditRole(id, label, description string, color nip86.Color, order int) error {
+func (m *ManagementStore) EditRole(id, label, description string, hue, order int) error {
 	if _, exists := m.GetRoleDefinition(id); !exists {
 		return fmt.Errorf("role %q does not exist", id)
 	}
 
-	event, err := m.buildRoleEvent(id, label, description, color, order)
+	event, err := m.buildRoleEvent(id, label, description, hue, order)
 	if err != nil {
 		return err
 	}
@@ -751,12 +713,12 @@ func (m *ManagementStore) Enable(instance *Instance) {
 		return m.GetBannedEventItems(), nil
 	}
 
-	instance.Relay.ManagementAPI.CreateRole = func(ctx context.Context, id, label, description string, color nip86.Color, order int) error {
-		return m.CreateRole(id, label, description, color, order)
+	instance.Relay.ManagementAPI.CreateRole = func(ctx context.Context, id, label, description string, hue, order int) error {
+		return m.CreateRole(id, label, description, hue, order)
 	}
 
-	instance.Relay.ManagementAPI.EditRole = func(ctx context.Context, id, label, description string, color nip86.Color, order int) error {
-		return m.EditRole(id, label, description, color, order)
+	instance.Relay.ManagementAPI.EditRole = func(ctx context.Context, id, label, description string, hue, order int) error {
+		return m.EditRole(id, label, description, hue, order)
 	}
 
 	instance.Relay.ManagementAPI.DeleteRole = func(ctx context.Context, id string) error {

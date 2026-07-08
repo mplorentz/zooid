@@ -187,6 +187,14 @@ func validateNIP98Auth(r *http.Request) (nostr.PubKey, error) {
 		return nostr.PubKey{}, fmt.Errorf("invalid event signature")
 	}
 
+	// Bound how long a captured/leaked "Authorization: Nostr ..." header stays
+	// valid - without this, a signed auth event for a given (url, method) pair
+	// would be replayable forever.
+	const nip98MaxClockSkew nostr.Timestamp = 60
+	if age := nostr.Now() - event.CreatedAt; age > nip98MaxClockSkew || age < -nip98MaxClockSkew {
+		return nostr.PubKey{}, fmt.Errorf("event is outside the allowed time window")
+	}
+
 	scheme := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = scheme + "s"

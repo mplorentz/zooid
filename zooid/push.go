@@ -3,11 +3,14 @@ package zooid
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -85,8 +88,18 @@ func (p *PushManager) ValidatePushSubscription(event nostr.Event) (reject bool, 
 		}
 
 		callbackURL := callbackTag[1]
-		if parsedURL, err := url.Parse(callbackURL); err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		parsedURL, err := url.Parse(callbackURL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 			return true, "invalid: callback must be a valid HTTP or HTTPS URL"
+		}
+
+		// Reject callbacks that are obviously internal/local right away, for
+		// clearer feedback. This isn't the actual SSRF defense - a hostname can
+		// still resolve to an internal address later, possibly differently each
+		// time (DNS rebinding) - the dial-time check in Enable is what actually
+		// enforces this; this just fails fast for the common literal-IP case.
+		if ip := net.ParseIP(parsedURL.Hostname()); ip != nil && isBlockedCallbackIP(ip) {
+			return true, "invalid: callback must not point to a local or internal address"
 		}
 	}
 
@@ -233,11 +246,48 @@ func (p *PushManager) sendCallback(subscriptionID nostr.ID, callback string, pay
 	}
 }
 
+// isBlockedCallbackIP reports whether ip is a loopback, private, link-local,
+// unspecified, or multicast address - i.e. not something a relay should ever
+// make an outbound request to on a subscriber's behalf.
+func isBlockedCallbackIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+}
+
 // Middleware
 
 func (p *PushManager) Enable(instance *Instance) {
 	p.client = &http.Client{
 		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			// Guard against SSRF via a push subscription's callback URL,
+			// including DNS rebinding (a hostname resolving to a public address
+			// at registration time but an internal one at delivery time, or a
+			// different one on each lookup): net.Dialer's Control hook fires
+			// with the literal address about to be connected to, after DNS
+			// resolution and right before the actual socket connect, so this
+			// check can't be bypassed by whatever the hostname resolves to.
+			DialContext: (&net.Dialer{
+				Timeout: 10 * time.Second,
+				Control: func(network, address string, c syscall.RawConn) error {
+					host, _, err := net.SplitHostPort(address)
+					if err != nil {
+						return err
+					}
+
+					ip := net.ParseIP(host)
+					if ip == nil {
+						return fmt.Errorf("refusing to dial unparseable address %q", address)
+					}
+
+					if isBlockedCallbackIP(ip) {
+						return fmt.Errorf("refusing to dial local/internal address %q", address)
+					}
+
+					return nil
+				},
+			}).DialContext,
+		},
 	}
 	p.errorCounts = make(map[string]int)
 
