@@ -350,7 +350,7 @@ func (instance *Instance) OnEvent(ctx context.Context, event nostr.Event) (rejec
 
 	if !isAuthenticated {
 		return true, "auth-required: authentication is required for access"
-	} else if pubkey != event.PubKey {
+	} else if pubkey != event.PubKey && !instance.Config.IsSelf(event.PubKey) {
 		return true, "restricted: you cannot publish events on behalf of others"
 	}
 

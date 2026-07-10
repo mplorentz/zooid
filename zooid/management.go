@@ -535,9 +535,10 @@ var signableKinds = []nostr.Kind{
 	39067,
 }
 
-// SignEvent signs an event template with the relay's identity key on an admin's behalf, then
-// stores and broadcasts it before returning the signed event. Only kinds in signableKinds are
-// supported; every other kind is rejected outright.
+// SignEvent signs an event template with the relay's identity key on an admin's behalf and
+// returns it. The signed event is neither stored nor broadcast — the caller is expected to
+// publish it back to the relay. Only kinds in signableKinds are supported; every other kind is
+// rejected outright.
 func (m *ManagementStore) SignEvent(kind nostr.Kind, createdAt nostr.Timestamp, tags nostr.Tags, content string) (nostr.Event, error) {
 	if !slices.Contains(signableKinds, kind) {
 		return nostr.Event{}, errors.New("kind not allowed")
@@ -556,7 +557,13 @@ func (m *ManagementStore) SignEvent(kind nostr.Kind, createdAt nostr.Timestamp, 
 		Content:   content,
 	}
 
-	if err := m.Events.SignAndStoreEvent(&event, true); err != nil {
+	// OnEvent refuses to accept internal events, so signing one would hand the caller an event
+	// they could never publish. Fail here instead, where the error is actionable.
+	if IsInternalEvent(event) {
+		return nostr.Event{}, errors.New("d tag is reserved for internal use")
+	}
+
+	if err := m.Config.Sign(&event); err != nil {
 		return nostr.Event{}, err
 	}
 

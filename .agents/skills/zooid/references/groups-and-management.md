@@ -329,7 +329,15 @@ vestigial; the real wire kind for room presence is 39004.
   nonexistent role id errors out *before* calling `AddMember`.
 - `TestManagementStore_SignEvent_RejectsOtherKinds` pins the exact allow-list for the
   relay-signs-on-behalf-of-admin feature: `KindApplicationSpecificData`(30078),
-  `KindDeletion`(5), `30067`, `39067` only.
+  `KindDeletion`(5), `30067`, `39067` only. `SignEvent` **only signs** — it neither stores nor
+  broadcasts; the admin publishes the returned event back over the wire, and `OnEvent`'s
+  "no publishing on behalf of others" check has a `Config.IsSelf(event.PubKey)` escape hatch to
+  let it through. That escape hatch is safe only because khatru's `VerifySignature()`
+  (`khatru/handlers.go`) runs *before* any reject hook, so nobody but the relay can present an
+  event bearing the relay's pubkey. `TestManagementStore_SignEvent_RejectsInternalEvents` pins
+  the corollary: `SignEvent` refuses a `zooid/`-prefixed `d` tag, because `IsInternalEvent`
+  would make the resulting event unpublishable — better to fail at sign time than hand back an
+  event the relay will later reject.
 - `TestManagementStore_CreateClaim_ValidatesJoinRequest` is the one test exercising the full
   claim→join wiring end-to-end, but does **not** test whether the claim is consumed afterward —
   the "reusable by design" behavior is only verifiable by reading `management.go:665-689`

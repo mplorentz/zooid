@@ -498,7 +498,7 @@ func TestManagementStore_DeleteRole_BroadcastsDeletion(t *testing.T) {
 func TestManagementStore_SignEvent_AllowedKind(t *testing.T) {
 	mgmt := createTestManagementStore()
 
-	tags := nostr.Tags{nostr.Tag{"d", "zooid/test"}}
+	tags := nostr.Tags{nostr.Tag{"d", "test"}}
 
 	event, err := mgmt.SignEvent(nostr.KindApplicationSpecificData, 0, tags, "hello")
 	if err != nil {
@@ -518,18 +518,13 @@ func TestManagementStore_SignEvent_AllowedKind(t *testing.T) {
 		t.Error("SignEvent() should default a missing created_at to the current time")
 	}
 
-	// SignEvent persists the signed event so it can be served back to clients.
-	filter := nostr.Filter{Kinds: []nostr.Kind{nostr.KindApplicationSpecificData}, Tags: nostr.TagMap{"d": []string{"zooid/test"}}}
+	// SignEvent only signs; the caller publishes the event back to the relay itself.
+	filter := nostr.Filter{Kinds: []nostr.Kind{nostr.KindApplicationSpecificData}, Tags: nostr.TagMap{"d": []string{"test"}}}
 
-	persisted := false
 	for stored := range mgmt.Events.QueryEvents(filter, 1) {
 		if stored.ID == event.ID {
-			persisted = true
+			t.Error("SignEvent() should not store the signed event")
 		}
-	}
-
-	if !persisted {
-		t.Error("SignEvent() should store the signed event")
 	}
 }
 
@@ -538,6 +533,19 @@ func TestManagementStore_SignEvent_RejectsOtherKinds(t *testing.T) {
 
 	if _, err := mgmt.SignEvent(nostr.KindTextNote, 0, nil, ""); err == nil || err.Error() != "kind not allowed" {
 		t.Errorf("SignEvent() error = %v, want \"kind not allowed\"", err)
+	}
+}
+
+// The relay must not sign an event OnEvent would then refuse to accept, so the reserved
+// "zooid/" d-tag namespace is rejected at sign time rather than at publish time.
+func TestManagementStore_SignEvent_RejectsInternalEvents(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	tags := nostr.Tags{nostr.Tag{"d", BANNED_PUBKEYS}}
+
+	_, err := mgmt.SignEvent(nostr.KindApplicationSpecificData, 0, tags, "")
+	if err == nil || err.Error() != "d tag is reserved for internal use" {
+		t.Errorf("SignEvent() error = %v, want \"d tag is reserved for internal use\"", err)
 	}
 }
 
