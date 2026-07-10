@@ -189,6 +189,11 @@ func (events *EventStore) buildSelectQuery(filter nostr.Filter) squirrel.SelectB
 	// Qualify every column with the events table name: once a search join adds
 	// the fts5 table below, both tables declare a "content" column and an
 	// unqualified reference to it is ambiguous.
+	//
+	// created_at only has second resolution, so it ties often - two events written in
+	// the same second have no inherent order. Break the tie on rowid so insertion order
+	// decides, and readers that take the first row (GroupStore.IsMember, GetMetadata,
+	// ...) reliably see the newest event rather than an arbitrary one.
 	qb := squirrel.Select(
 		eventsTable+".id",
 		eventsTable+".created_at",
@@ -197,7 +202,7 @@ func (events *EventStore) buildSelectQuery(filter nostr.Filter) squirrel.SelectB
 		eventsTable+".content",
 		eventsTable+".tags",
 		eventsTable+".sig",
-	).From(eventsTable).OrderBy(eventsTable + ".created_at DESC")
+	).From(eventsTable).OrderBy(eventsTable+".created_at DESC", eventsTable+".rowid DESC")
 
 	// Handle search with FTS (if available)
 	if filter.Search != "" && events.FTSAvailable {

@@ -161,6 +161,10 @@ func (g *GroupStore) UpdateAdminsList(h string) error {
 // Membership
 
 func (g *GroupStore) AddMember(h string, pubkey nostr.PubKey) error {
+	if g.IsMember(h, pubkey) {
+		return nil
+	}
+
 	event := nostr.Event{
 		Kind:      nostr.KindSimpleGroupPutUser,
 		CreatedAt: nostr.Now(),
@@ -174,6 +178,10 @@ func (g *GroupStore) AddMember(h string, pubkey nostr.PubKey) error {
 }
 
 func (g *GroupStore) RemoveMember(h string, pubkey nostr.PubKey) error {
+	if !g.IsMember(h, pubkey) {
+		return nil
+	}
+
 	event := nostr.Event{
 		Kind:      nostr.KindSimpleGroupRemoveUser,
 		CreatedAt: nostr.Now(),

@@ -154,6 +154,74 @@ func TestGroupStore_UpdatePins(t *testing.T) {
 	}
 }
 
+func countMembershipEvents(groups *GroupStore, h string, kind nostr.Kind) int {
+	filter := nostr.Filter{
+		Kinds: []nostr.Kind{kind},
+		Tags:  nostr.TagMap{"h": []string{h}},
+	}
+
+	count := 0
+	for range groups.Events.QueryEvents(filter, 0) {
+		count++
+	}
+
+	return count
+}
+
+func TestGroupStore_AddMember_IsIdempotent(t *testing.T) {
+	groups := createTestGroupStore()
+	pubkey := nostr.Generate().Public()
+
+	if err := groups.AddMember("group123", pubkey); err != nil {
+		t.Fatalf("AddMember() error = %v", err)
+	}
+
+	if err := groups.AddMember("group123", pubkey); err != nil {
+		t.Fatalf("AddMember() second call error = %v", err)
+	}
+
+	if !groups.IsMember("group123", pubkey) {
+		t.Error("IsMember() = false, want true")
+	}
+
+	if count := countMembershipEvents(groups, "group123", nostr.KindSimpleGroupPutUser); count != 1 {
+		t.Errorf("put-user events = %d, want 1", count)
+	}
+}
+
+func TestGroupStore_RemoveMember_SkipsNonMember(t *testing.T) {
+	groups := createTestGroupStore()
+	pubkey := nostr.Generate().Public()
+
+	if err := groups.RemoveMember("group123", pubkey); err != nil {
+		t.Fatalf("RemoveMember() error = %v", err)
+	}
+
+	if count := countMembershipEvents(groups, "group123", nostr.KindSimpleGroupRemoveUser); count != 0 {
+		t.Errorf("remove-user events = %d, want 0", count)
+	}
+
+	if err := groups.AddMember("group123", pubkey); err != nil {
+		t.Fatalf("AddMember() error = %v", err)
+	}
+
+	if err := groups.RemoveMember("group123", pubkey); err != nil {
+		t.Fatalf("RemoveMember() error = %v", err)
+	}
+
+	if err := groups.RemoveMember("group123", pubkey); err != nil {
+		t.Fatalf("RemoveMember() second call error = %v", err)
+	}
+
+	if groups.IsMember("group123", pubkey) {
+		t.Error("IsMember() = true, want false")
+	}
+
+	if count := countMembershipEvents(groups, "group123", nostr.KindSimpleGroupRemoveUser); count != 1 {
+		t.Errorf("remove-user events = %d, want 1", count)
+	}
+}
+
 func TestGroupStore_CheckWrite_PutPins(t *testing.T) {
 	groups := createTestGroupStore()
 	groups.Config.Groups.Enabled = true

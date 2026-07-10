@@ -30,6 +30,58 @@ func createTestManagementStore() *ManagementStore {
 	}
 }
 
+func countRelayMembershipEvents(mgmt *ManagementStore, kind nostr.Kind) int {
+	count := 0
+	for range mgmt.Events.QueryEvents(nostr.Filter{Kinds: []nostr.Kind{kind}}, 0) {
+		count++
+	}
+
+	return count
+}
+
+func TestManagementStore_MembershipChangesAreIdempotent(t *testing.T) {
+	mgmt := createTestManagementStore()
+
+	pubkey := nostr.Generate().Public()
+
+	// Removing a pubkey that was never a member shouldn't record anything
+	if err := mgmt.RemoveMember(pubkey); err != nil {
+		t.Fatalf("RemoveMember() error = %v", err)
+	}
+
+	if count := countRelayMembershipEvents(mgmt, RELAY_REMOVE_MEMBER); count != 0 {
+		t.Errorf("remove-member events = %d, want 0", count)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := mgmt.AddMember(pubkey); err != nil {
+			t.Fatalf("AddMember() call %d error = %v", i+1, err)
+		}
+	}
+
+	if !mgmt.IsMember(pubkey) {
+		t.Error("IsMember() = false, want true")
+	}
+
+	if count := countRelayMembershipEvents(mgmt, RELAY_ADD_MEMBER); count != 1 {
+		t.Errorf("add-member events = %d, want 1", count)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := mgmt.RemoveMember(pubkey); err != nil {
+			t.Fatalf("RemoveMember() call %d error = %v", i+1, err)
+		}
+	}
+
+	if mgmt.IsMember(pubkey) {
+		t.Error("IsMember() = true, want false")
+	}
+
+	if count := countRelayMembershipEvents(mgmt, RELAY_REMOVE_MEMBER); count != 1 {
+		t.Errorf("remove-member events = %d, want 1", count)
+	}
+}
+
 func TestManagementStore_BanPubkey(t *testing.T) {
 	mgmt := createTestManagementStore()
 
