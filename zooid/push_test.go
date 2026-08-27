@@ -1,10 +1,13 @@
 package zooid
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
@@ -130,5 +133,235 @@ func TestPushManager_Enable_ClientRefusesToDialLoopback(t *testing.T) {
 	_, err := p.client.Post(srv.URL, "application/json", strings.NewReader("{}"))
 	if err == nil {
 		t.Error("push client should refuse to dial a loopback callback URL, but the request succeeded")
+	}
+}
+
+// newHandlingPushManager builds a PushManager whose callback delivery uses a
+// plain http.Client (NOT the SSRF-guarded client from Enable, which refuses to
+// dial the loopback address an httptest server listens on). Groups is wired
+// with Groups.Enabled=false so IsGroupEvent returns false for the ordinary
+// events under test.
+func newHandlingPushManager(t *testing.T) *PushManager {
+	t.Helper()
+	p := createTestPushManager()
+	p.Groups = &GroupStore{Config: &Config{Host: p.Config.Host}}
+	p.client = &http.Client{}
+	p.errorCounts = make(map[string]int)
+	return p
+}
+
+// waitForCallback polls predicate until it succeeds or a deadline passes,
+// since sendCallback runs in a goroutine.
+func waitForCallback(t *testing.T, test func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !test() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for callback")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestPushManager_HandleEvent_DeliversMatchingEventWithIncludeEvent(t *testing.T) {
+	p := newHandlingPushManager(t)
+	publisher := nostr.Generate()
+	subscriber := nostr.Generate()
+
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = b
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sub := nostr.Event{
+		Kind:      PUSH_SUBSCRIPTION,
+		PubKey:    subscriber.Public(),
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"d", "sub-deliver"},
+			{"relay", "wss://" + p.Config.Host + "/"},
+			{"filter", `{"kinds":[9]}`},
+			{"callback", srv.URL},
+			{"include_event"},
+		},
+	}
+	sub.Sign(subscriber)
+	if err := p.Events.SaveEvent(sub); err != nil {
+		t.Fatalf("SaveEvent: %v", err)
+	}
+
+	p.HandleEvent(nostr.Event{PubKey: publisher.Public(), Kind: 9, CreatedAt: nostr.Now()})
+
+	waitForCallback(t, func() bool { return got != nil })
+	var payload PushPayload
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("callback payload not valid JSON: %v", err)
+	}
+	if payload.Relay != "wss://"+p.Config.Host+"/" {
+		t.Errorf("payload relay = %q, want %q", payload.Relay, "wss://"+p.Config.Host+"/")
+	}
+	if payload.Event == nil {
+		t.Error("include_event tag present but payload.event omitted")
+	} else if payload.Event.Kind != 9 {
+		t.Errorf("payload.event.kind = %d, want 9", payload.Event.Kind)
+	}
+}
+
+func TestPushManager_HandleEvent_OmitsEventWithoutIncludeEvent(t *testing.T) {
+	p := newHandlingPushManager(t)
+	publisher := nostr.Generate()
+	subscriber := nostr.Generate()
+
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = b
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sub := nostr.Event{
+		Kind:      PUSH_SUBSCRIPTION,
+		PubKey:    subscriber.Public(),
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"d", "sub-no-event"},
+			{"relay", "wss://" + p.Config.Host + "/"},
+			{"filter", `{"kinds":[9]}`},
+			{"callback", srv.URL},
+		},
+	}
+	sub.Sign(subscriber)
+	if err := p.Events.SaveEvent(sub); err != nil {
+		t.Fatalf("SaveEvent: %v", err)
+	}
+
+	p.HandleEvent(nostr.Event{PubKey: publisher.Public(), Kind: 9, CreatedAt: nostr.Now()})
+
+	waitForCallback(t, func() bool { return got != nil })
+	var payload PushPayload
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("callback payload not valid JSON: %v", err)
+	}
+	if payload.Event != nil {
+		t.Error("include_event tag absent but payload.event was populated")
+	}
+}
+
+func TestPushManager_HandleEvent_DoesNotDeliverForNonMatchingFilter(t *testing.T) {
+	p := newHandlingPushManager(t)
+	publisher := nostr.Generate()
+	subscriber := nostr.Generate()
+
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sub := nostr.Event{
+		Kind:      PUSH_SUBSCRIPTION,
+		PubKey:    subscriber.Public(),
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"d", "sub-nomatch"},
+			{"relay", "wss://" + p.Config.Host + "/"},
+			{"filter", `{"kinds":[9041]}`},
+			{"callback", srv.URL},
+		},
+	}
+	sub.Sign(subscriber)
+	if err := p.Events.SaveEvent(sub); err != nil {
+		t.Fatalf("SaveEvent: %v", err)
+	}
+
+	p.HandleEvent(nostr.Event{PubKey: publisher.Public(), Kind: 9, CreatedAt: nostr.Now()})
+
+	if called {
+		t.Error("callback invoked for an event that does not match the subscription filter")
+	}
+}
+
+func TestPushManager_HandleEvent_SkipsOwnEvents(t *testing.T) {
+	p := newHandlingPushManager(t)
+	subscriber := nostr.Generate()
+
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sub := nostr.Event{
+		Kind:      PUSH_SUBSCRIPTION,
+		PubKey:    subscriber.Public(),
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"d", "sub-self"},
+			{"relay", "wss://" + p.Config.Host + "/"},
+			{"filter", `{"kinds":[9]}`},
+			{"callback", srv.URL},
+		},
+	}
+	sub.Sign(subscriber)
+	if err := p.Events.SaveEvent(sub); err != nil {
+		t.Fatalf("SaveEvent: %v", err)
+	}
+
+	// The subscriber itself publishes the kind 9; the relay must not push it back.
+	p.HandleEvent(nostr.Event{PubKey: subscriber.Public(), Kind: 9, CreatedAt: nostr.Now()})
+
+	if called {
+		t.Error("callback invoked for the subscriber's own event; expected self-push suppression")
+	}
+}
+
+func TestPushManager_HandleEvent_DeletesSubscriptionOn404(t *testing.T) {
+	p := newHandlingPushManager(t)
+	publisher := nostr.Generate()
+	subscriber := nostr.Generate()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	sub := nostr.Event{
+		Kind:      PUSH_SUBSCRIPTION,
+		PubKey:    subscriber.Public(),
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"d", "sub-404"},
+			{"relay", "wss://" + p.Config.Host + "/"},
+			{"filter", `{"kinds":[9]}`},
+			{"callback", srv.URL},
+		},
+	}
+	sub.Sign(subscriber)
+	if err := p.Events.SaveEvent(sub); err != nil {
+		t.Fatalf("SaveEvent: %v", err)
+	}
+
+	p.HandleEvent(nostr.Event{PubKey: publisher.Public(), Kind: 9, CreatedAt: nostr.Now()})
+
+	// sendCallback runs in a goroutine; give it time to observe the 404 and delete.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		count, err := p.Events.CountEvents(nostr.Filter{Kinds: []nostr.Kind{PUSH_SUBSCRIPTION}})
+		if err != nil {
+			t.Fatalf("CountEvents: %v", err)
+		}
+		if count == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("subscription was not deleted after a 404 callback (count=%d)", count)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

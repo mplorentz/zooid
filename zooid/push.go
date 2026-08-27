@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -210,7 +211,10 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 			Relay: "wss://" + p.Config.Host + "/",
 		}
 
-		if subscriptionEvent.Tags.Find("include_event") != nil {
+		// include_event is a bare flag tag (["include_event"]), so use Has (matches
+		// on key presence, len>=1) rather than Find (which requires a value,
+		// len>=2) - otherwise the event is never included.
+		if subscriptionEvent.Tags.Has("include_event") {
 			payload.Event = &event
 		}
 
@@ -234,6 +238,14 @@ func (p *PushManager) sendCallback(subscriptionID nostr.ID, callback string, pay
 	if resp != nil {
 		defer resp.Body.Close()
 	}
+
+	log.Printf("[push] callback for subscription %s to %s: resp_status=%v err=%v",
+		subscriptionID.Hex()[:8], callback, func() string {
+			if resp == nil {
+				return "<no response>"
+			}
+			return strconv.Itoa(resp.StatusCode)
+		}(), err)
 
 	incrementError := func() (count int) {
 		p.errorCountMu.Lock()
