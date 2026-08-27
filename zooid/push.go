@@ -41,8 +41,14 @@ func (p *PushManager) ValidatePushSubscription(event nostr.Event) (reject bool, 
 		return true, "invalid: missing or empty d tag"
 	}
 
-	if event.Tags.FindWithValue("relay", "wss://"+p.Config.Host+"/") == nil {
-		return true, "invalid: relay tag does not match this relay's URL"
+	relayTag := event.Tags.Find("relay")
+	if len(relayTag) < 2 {
+		return true, "invalid: missing relay tag"
+	}
+
+	expected := nostr.NormalizeURL("wss://" + p.Config.Host)
+	if nostr.NormalizeURL(relayTag[1]) != expected {
+		return true, "invalid: relay tag does not match this relay's URL, expected " + expected
 	}
 
 	filterTags := slices.Collect(event.Tags.FindAll("filter"))
@@ -122,8 +128,11 @@ func (p *PushManager) ValidatePushSubscription(event nostr.Event) (reject bool, 
 
 func (p *PushManager) HandleEvent(event nostr.Event) {
 	if !IsReadableEvent(event) {
+		log.Printf("[push] event %s kind=%d not readable; skipping", event.ID.Hex()[:8], event.Kind)
 		return
 	}
+
+	log.Printf("[push] evaluating event %s kind=%d for push subscribers", event.ID.Hex()[:8], event.Kind)
 
 	filter := nostr.Filter{
 		Kinds: []nostr.Kind{PUSH_SUBSCRIPTION},
@@ -135,6 +144,7 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		if p.Groups.IsGroupEvent(event) && !p.Groups.CanRead(subscriptionEvent.PubKey, event) {
+			log.Printf("[push] subscriber %s cannot read group event kind=%d; skipping", subscriptionEvent.PubKey.Hex()[:8], event.Kind)
 			continue
 		}
 
@@ -147,6 +157,7 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 
 			var filter nostr.Filter
 			if err := json.Unmarshal([]byte(filterTag[1]), &filter); err != nil {
+				log.Printf("[push] subscription %s has malformed filter tag; skipping", subscriptionEvent.ID.Hex()[:8])
 				continue
 			}
 
@@ -157,6 +168,7 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		if !matched {
+			log.Printf("[push] subscription %s (sub %s) filters did not match kind=%d; skipping", subscriptionEvent.ID.Hex()[:8], subscriptionEvent.PubKey.Hex()[:8], event.Kind)
 			continue
 		}
 
@@ -179,6 +191,7 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		if ignored {
+			log.Printf("[push] subscription %s ignored event kind=%d; skipping", subscriptionEvent.ID.Hex()[:8], event.Kind)
 			continue
 		}
 
