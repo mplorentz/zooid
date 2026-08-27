@@ -138,7 +138,9 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		Kinds: []nostr.Kind{PUSH_SUBSCRIPTION},
 	}
 
+	matchedSubscribers := 0
 	for subscriptionEvent := range p.Events.QueryEvents(filter, 0) {
+		matchedSubscribers++
 		if event.PubKey == subscriptionEvent.PubKey {
 			continue
 		}
@@ -218,6 +220,12 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		go p.sendCallback(subscriptionEvent.ID, callback, payloadBytes)
+	}
+
+	if matchedSubscribers == 0 {
+		log.Printf("[push] no PUSH_SUBSCRIPTION events found in store; event kind=%d not pushed", event.Kind)
+	} else {
+		log.Printf("[push] scanned %d PUSH_SUBSCRIPTION events for event kind=%d", matchedSubscribers, event.Kind)
 	}
 }
 
