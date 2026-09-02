@@ -41,8 +41,14 @@ func (p *PushManager) ValidatePushSubscription(event nostr.Event) (reject bool, 
 		return true, "invalid: missing or empty d tag"
 	}
 
-	if event.Tags.FindWithValue("relay", "wss://"+p.Config.Host+"/") == nil {
-		return true, "invalid: relay tag does not match this relay's URL"
+	relayTag := event.Tags.Find("relay")
+	if len(relayTag) < 2 {
+		return true, "invalid: missing relay tag"
+	}
+
+	expected := nostr.NormalizeURL("wss://" + p.Config.Host)
+	if nostr.NormalizeURL(relayTag[1]) != expected {
+		return true, "invalid: relay tag does not match this relay's URL, expected " + expected
 	}
 
 	filterTags := slices.Collect(event.Tags.FindAll("filter"))
@@ -195,7 +201,7 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 			Relay: "wss://" + p.Config.Host + "/",
 		}
 
-		if subscriptionEvent.Tags.Find("include_event") != nil {
+		if subscriptionEvent.Tags.Has("include_event") {
 			payload.Event = &event
 		}
 

@@ -74,6 +74,45 @@ func TestPushManager_ValidatePushSubscription_AcceptsPublicCallback(t *testing.T
 	}
 }
 
+// Regression test: the relay tag check compared against the relay URL with an
+// exact trailing slash, so a relay tag that omitted the "/" (which NIP-65
+// normalization treats as equivalent) was rejected. Ensure both forms are
+// accepted, and that a genuinely different relay is still rejected.
+func TestPushManager_ValidatePushSubscription_RelayTagNormalization(t *testing.T) {
+	p := createTestPushManager()
+	secret := nostr.Generate()
+
+	for _, relay := range []string{
+		"wss://" + p.Config.Host + "/",
+		"wss://" + p.Config.Host,
+	} {
+		event := pushSubscriptionEvent(secret, p.Config.Host, "https://example.com/hook")
+		for i := range event.Tags {
+			if event.Tags[i][0] == "relay" {
+				event.Tags[i] = nostr.Tag{"relay", relay}
+			}
+		}
+		reject, msg := p.ValidatePushSubscription(event)
+		if reject {
+			t.Errorf("ValidatePushSubscription() relay=%q should be accepted, was rejected: %s", relay, msg)
+		}
+	}
+
+	wrongHost := pushSubscriptionEvent(secret, p.Config.Host, "https://example.com/hook")
+	for i := range wrongHost.Tags {
+		if wrongHost.Tags[i][0] == "relay" {
+			wrongHost.Tags[i] = nostr.Tag{"relay", "wss://other.example/"}
+		}
+	}
+	reject2, msg2 := p.ValidatePushSubscription(wrongHost)
+	if !reject2 {
+		t.Error("ValidatePushSubscription() relay for another host should be rejected, was accepted")
+	}
+	if !strings.Contains(msg2, "expected") {
+		t.Errorf("ValidatePushSubscription() rejection should reveal the expected URL, got %q", msg2)
+	}
+}
+
 // Regression test for the dial-time guard: even if a callback hostname
 // resolves to a public address at registration time (or isn't a literal IP
 // at all, so the registration-time check in ValidatePushSubscription can't

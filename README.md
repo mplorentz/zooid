@@ -171,7 +171,7 @@ enabled = true
 enabled = false
 
 [push]
-enabled = false
+enabled = true
 
 [roles.member]
 can_invite = true
