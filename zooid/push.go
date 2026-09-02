@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -129,25 +128,19 @@ func (p *PushManager) ValidatePushSubscription(event nostr.Event) (reject bool, 
 
 func (p *PushManager) HandleEvent(event nostr.Event) {
 	if !IsReadableEvent(event) {
-		log.Printf("[push] event %s kind=%d not readable; skipping", event.ID.Hex()[:8], event.Kind)
 		return
 	}
-
-	log.Printf("[push] evaluating event %s kind=%d for push subscribers", event.ID.Hex()[:8], event.Kind)
 
 	filter := nostr.Filter{
 		Kinds: []nostr.Kind{PUSH_SUBSCRIPTION},
 	}
 
-	matchedSubscribers := 0
 	for subscriptionEvent := range p.Events.QueryEvents(filter, 0) {
-		matchedSubscribers++
 		if event.PubKey == subscriptionEvent.PubKey {
 			continue
 		}
 
 		if p.Groups.IsGroupEvent(event) && !p.Groups.CanRead(subscriptionEvent.PubKey, event) {
-			log.Printf("[push] subscriber %s cannot read group event kind=%d; skipping", subscriptionEvent.PubKey.Hex()[:8], event.Kind)
 			continue
 		}
 
@@ -160,7 +153,6 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 
 			var filter nostr.Filter
 			if err := json.Unmarshal([]byte(filterTag[1]), &filter); err != nil {
-				log.Printf("[push] subscription %s has malformed filter tag; skipping", subscriptionEvent.ID.Hex()[:8])
 				continue
 			}
 
@@ -171,7 +163,6 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		if !matched {
-			log.Printf("[push] subscription %s (sub %s) filters did not match kind=%d; skipping", subscriptionEvent.ID.Hex()[:8], subscriptionEvent.PubKey.Hex()[:8], event.Kind)
 			continue
 		}
 
@@ -194,7 +185,6 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 		}
 
 		if ignored {
-			log.Printf("[push] subscription %s ignored event kind=%d; skipping", subscriptionEvent.ID.Hex()[:8], event.Kind)
 			continue
 		}
 
@@ -225,12 +215,6 @@ func (p *PushManager) HandleEvent(event nostr.Event) {
 
 		go p.sendCallback(subscriptionEvent.ID, callback, payloadBytes)
 	}
-
-	if matchedSubscribers == 0 {
-		log.Printf("[push] no PUSH_SUBSCRIPTION events found in store; event kind=%d not pushed", event.Kind)
-	} else {
-		log.Printf("[push] scanned %d PUSH_SUBSCRIPTION events for event kind=%d", matchedSubscribers, event.Kind)
-	}
 }
 
 func (p *PushManager) sendCallback(subscriptionID nostr.ID, callback string, payloadBytes []byte) {
@@ -238,14 +222,6 @@ func (p *PushManager) sendCallback(subscriptionID nostr.ID, callback string, pay
 	if resp != nil {
 		defer resp.Body.Close()
 	}
-
-	log.Printf("[push] callback for subscription %s to %s: resp_status=%v err=%v",
-		subscriptionID.Hex()[:8], callback, func() string {
-			if resp == nil {
-				return "<no response>"
-			}
-			return strconv.Itoa(resp.StatusCode)
-		}(), err)
 
 	incrementError := func() (count int) {
 		p.errorCountMu.Lock()
